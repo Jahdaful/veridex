@@ -1,0 +1,5 @@
+[variables]
+NODE_VERSION = "20"
+
+[phases.build]
+cmds = ["npm install --omit=dev"]
