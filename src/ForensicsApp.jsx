@@ -491,7 +491,7 @@ export default function ForensicsApp() {
                       onChange={e => setTermsChecked(e.target.checked)}
                     />
                     <span style={{ fontSize: 11, color: "#6a8090", lineHeight: 1.6 }}>
-                      I confirm I am an authorized societal enforcement officer or licensed forensic professional, and I agree to the{" "}
+                      I confirm I am an authorized societal enforcement officer, and I agree to the{" "}
                       <button type="button" className="modal-link" onClick={() => setModal("terms")}>Terms &amp; Conditions</button>
                       {" "}and{" "}
                       <button type="button" className="modal-link" onClick={() => setModal("privacy")}>Privacy Policy</button>.
