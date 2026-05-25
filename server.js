@@ -633,7 +633,7 @@ app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, r
 
     const useVision = fileType === "image"
       && ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(file.mimetype)
-      && file.size <= 5 * 1024 * 1024;
+      && file.size <= 20 * 1024 * 1024;
 
     const messages = useVision
       ? [{ role: "user", content: [
@@ -653,7 +653,13 @@ app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, r
     });
 
     const data  = await response.json();
-    if (data.type === "error") return res.status(500).json({ error: "Analysis service error. Try again." });
+    if (data.type === "error") {
+      console.error("[analyze] Anthropic API error:", JSON.stringify(data.error));
+      const msg = data.error?.type === "invalid_api_key" ? "API key invalid — check Railway variables."
+        : data.error?.type === "overloaded_error" ? "AI service overloaded. Try again in a moment."
+        : data.error?.message || "Analysis service error. Try again.";
+      return res.status(500).json({ error: msg });
+    }
 
     const text  = data.content?.map(i => i.text || "").join("") || "";
     const clean = text.replace(/```json|```/g, "").trim();
