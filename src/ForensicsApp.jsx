@@ -446,8 +446,8 @@ export default function ForensicsApp() {
             <div style={S.badge}>SOCIETAL ENFORCEMENT</div>
             {screen !== "login" && (
               <>
-                <button onClick={() => { setSettingsMsg(null); setDeleteConfirm(false); setScreen("settings"); }} style={{ background: "none", border: "none", color: "#2a3a55", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>SETTINGS</button>
-                <button onClick={handleLogout} style={{ background: "none", border: "none", color: "#2a3a55", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>LOGOUT</button>
+                <button onClick={() => { setSettingsMsg(null); setDeleteConfirm(false); setScreen("settings"); }} style={{ background: "none", border: "1px solid #00d4ff44", borderRadius: 6, color: "#00d4ff", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, padding: "4px 8px" }}>SETTINGS</button>
+                <button onClick={handleLogout} style={{ background: "none", border: "1px solid #ffffff33", borderRadius: 6, color: "#a0b4cc", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, padding: "4px 8px" }}>LOGOUT</button>
               </>
             )}
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#30D158", animation: "pulse 2s infinite", boxShadow: "0 0 8px #30D158" }} />
