@@ -2,9 +2,12 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import crypto from "crypto";
+import { promisify } from "util";
 import rateLimit from "express-rate-limit";
 import exifr from "exifr";
 import PDFDocument from "pdfkit";
+import fs from "fs";
+import path from "path";
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("FATAL: ANTHROPIC_API_KEY not set in .env"); process.exit(1);
@@ -24,6 +27,78 @@ app.use(cors({
   },
 }));
 
+// ── Session store (file-persisted, 8 hr TTL) ──────────────────────────────────
+const SESSIONS_FILE = path.join(process.cwd(), "sessions.json");
+const SESSION_TTL   = 8 * 60 * 60 * 1000;
+
+function loadSessions() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
+    const now = Date.now();
+    return new Map(Object.entries(raw).filter(([, s]) => s.expires > now));
+  } catch { return new Map(); }
+}
+function saveSessions() {
+  try { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions))); }
+  catch (e) { console.error("[sessions] save failed:", e.message); }
+}
+
+const sessions = loadSessions();
+
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  sessions.set(token, { expires: Date.now() + SESSION_TTL, userId });
+  saveSessions();
+  return token;
+}
+function validateSession(token) {
+  if (!token || !sessions.has(token)) return false;
+  const s = sessions.get(token);
+  if (Date.now() > s.expires) { sessions.delete(token); saveSessions(); return false; }
+  return true;
+}
+
+// Prune expired sessions hourly
+setInterval(() => {
+  let pruned = false;
+  for (const [t, s] of sessions) {
+    if (Date.now() > s.expires) { sessions.delete(t); pruned = true; }
+  }
+  if (pruned) saveSessions();
+}, 3_600_000);
+
+// ── User store (scrypt-hashed passwords) ──────────────────────────────────────
+const USERS_FILE  = path.join(process.cwd(), "users.json");
+const scryptAsync = promisify(crypto.scrypt);
+
+function loadUsers() {
+  try { return JSON.parse(fs.readFileSync(USERS_FILE, "utf8")); }
+  catch { return {}; }
+}
+function saveUsers(users) {
+  try { fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2)); }
+  catch (e) { console.error("[users] save failed:", e.message); }
+}
+
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = await scryptAsync(password, salt, 64);
+  return `${salt}:${hash.toString("hex")}`;
+}
+async function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(":");
+  const hashBuf = Buffer.from(hash, "hex");
+  const derived  = await scryptAsync(password, salt, 64);
+  return crypto.timingSafeEqual(hashBuf, derived);
+}
+
+// ── Auth middleware ───────────────────────────────────────────────────────────
+function auth(req, res, next) {
+  const token = req.headers["x-auth-token"] || "";
+  if (!validateSession(token)) return res.status(401).json({ error: "Unauthorized" });
+  next();
+}
+
 // ── File upload ───────────────────────────────────────────────────────────────
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -32,10 +107,14 @@ const upload = multer({
     cb(null, /^(image|video|audio)\//.test(file.mimetype)),
 });
 
-// ── Rate limiter ──────────────────────────────────────────────────────────────
+// ── Rate limiters ─────────────────────────────────────────────────────────────
 const scanLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true,
   message: { error: "Rate limit exceeded. Wait before scanning again." },
+});
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true,
+  message: { error: "Too many attempts. Try again in 15 minutes." },
 });
 
 // ── Magic byte validator ──────────────────────────────────────────────────────
@@ -86,33 +165,81 @@ Return ONLY a valid JSON object. No prose, no markdown, no explanation:
   "integrityFlags": ["<flag 1>", "<flag 2>"]
 }`;
 
+// ── Routes ────────────────────────────────────────────────────────────────────
 app.get("/", (req, res) => res.json({ status: "ok", service: "VERIDEX API" }));
 
-// ── Main analysis endpoint ────────────────────────────────────────────────────
-app.post("/api/analyze", scanLimiter, upload.single("file"), async (req, res) => {
-  if (activeUploads >= MAX_CONCURRENT) {
-    return res.status(429).json({ error: "Server busy. Try again in a moment." });
+// Register
+app.post("/api/register", authLimiter, express.json(), async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: "Email and password required." });
+
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(email))    return res.status(400).json({ error: "Invalid email address." });
+  if (password.length < 8)    return res.status(400).json({ error: "Password must be at least 8 characters." });
+
+  const users = loadUsers();
+  const key   = email.toLowerCase().trim();
+  if (users[key]) return res.status(409).json({ error: "An account with this email already exists." });
+
+  try {
+    users[key] = { passwordHash: await hashPassword(password), createdAt: new Date().toISOString() };
+    saveUsers(users);
+    res.json({ success: true, token: createSession(key) });
+  } catch {
+    res.status(500).json({ error: "Registration failed. Try again." });
   }
+});
+
+// Login (email + password only — no admin bypass)
+app.post("/api/auth", authLimiter, express.json(), async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: "Email and password required." });
+
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(email)) return res.status(400).json({ error: "Invalid email address." });
+
+  const users = loadUsers();
+  const key   = email.toLowerCase().trim();
+  const user  = users[key];
+  if (!user) return res.status(401).json({ error: "Invalid email or password." });
+
+  try {
+    if (!await verifyPassword(password, user.passwordHash))
+      return res.status(401).json({ error: "Invalid email or password." });
+    res.json({ success: true, token: createSession(key) });
+  } catch {
+    res.status(500).json({ error: "Authentication error. Try again." });
+  }
+});
+
+// Logout
+app.post("/api/logout", auth, (req, res) => {
+  sessions.delete(req.headers["x-auth-token"]);
+  saveSessions();
+  res.json({ success: true });
+});
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, res) => {
+  if (activeUploads >= MAX_CONCURRENT)
+    return res.status(429).json({ error: "Server busy. Try again in a moment." });
   activeUploads++;
 
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file provided." });
 
-    if (!validateMagicBytes(file.buffer, file.mimetype)) {
+    if (!validateMagicBytes(file.buffer, file.mimetype))
       return res.status(400).json({ error: "File content does not match declared type. Upload rejected." });
-    }
 
     const fileName = file.originalname;
     const fileType = file.mimetype.startsWith("video") ? "video"
       : file.mimetype.startsWith("audio") ? "audio" : "image";
-
     const sha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
 
     let exifData = null;
-    try {
-      exifData = await exifr.parse(file.buffer, { tiff: true, exif: true, gps: true, iptc: true });
-    } catch { /* no EXIF */ }
+    try { exifData = await exifr.parse(file.buffer, { tiff: true, exif: true, gps: true, iptc: true }); }
+    catch { /* no EXIF */ }
 
     const exifBlock = exifData ? [
       `Camera: ${exifData.Make || "—"} ${exifData.Model || ""}`.trim(),
@@ -124,37 +251,22 @@ app.post("/api/analyze", scanLimiter, upload.single("file"), async (req, res) =>
       `Lens: ${exifData.LensModel || "not found"}`,
     ].join("\n") : "No EXIF metadata extracted";
 
-    const metaBlock = `FILENAME: ${fileName}
-MIME: ${file.mimetype}
-SIZE: ${(file.size / 1024).toFixed(1)} KB
-SHA-256: ${sha256}
-EXIF:
-${exifBlock}`;
+    const metaBlock = `FILENAME: ${fileName}\nMIME: ${file.mimetype}\nSIZE: ${(file.size / 1024).toFixed(1)} KB\nSHA-256: ${sha256}\nEXIF:\n${exifBlock}`;
 
     const useVision = fileType === "image"
-      && ["image/jpeg", "image/png", "image/gif", "image/webp"].includes(file.mimetype)
+      && ["image/jpeg","image/png","image/gif","image/webp"].includes(file.mimetype)
       && file.size <= 5 * 1024 * 1024;
 
     const messages = useVision
-      ? [{
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: file.mimetype, data: file.buffer.toString("base64") } },
-            { type: "text", text: `Forensic image analysis. Examine the actual image content AND the metadata below.\n\n${metaBlock}\n\nInspect for:\n1. GAN/diffusion artifacts — spectral anomalies, unnatural noise floor, tile/grid patterns\n2. Face/body manipulation — blending seams, lighting inconsistency, texture synthesis\n3. AI generation markers — missing sensor noise, synthetic skin, anatomical errors, AI software in EXIF\n4. Metadata integrity — missing fields, AI software tags (Midjourney/DALL-E/Stable Diffusion/Kling), timestamp anomalies\n5. Compression artifacts inconsistent with claimed camera origin\n\nScore strictly: 0-30 authentic, 31-69 uncertain, 70-100 deepfake/AI-generated.\nReturn ONLY the JSON.` },
-          ],
-        }]
-      : [{
-          role: "user",
-          content: `Forensic ${fileType} analysis.\n\n${metaBlock}\n${file.size > 5 * 1024 * 1024 ? "\nNote: File too large for vision — metadata-only analysis." : ""}\n\nAnalyze filename patterns, known AI platform naming conventions (kling_, runway_, sora_, etc), EXIF integrity, and metadata signals.\nScore strictly: 0-30 authentic, 31-69 uncertain, 70-100 deepfake/synthetic.\nReturn ONLY the JSON.`,
-        }];
+      ? [{ role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: file.mimetype, data: file.buffer.toString("base64") } },
+          { type: "text", text: `Forensic image analysis. Examine the actual image content AND the metadata below.\n\n${metaBlock}\n\nInspect for:\n1. GAN/diffusion artifacts — spectral anomalies, unnatural noise floor, tile/grid patterns\n2. Face/body manipulation — blending seams, lighting inconsistency, texture synthesis\n3. AI generation markers — missing sensor noise, synthetic skin, anatomical errors, AI software in EXIF\n4. Metadata integrity — missing fields, AI software tags (Midjourney/DALL-E/Stable Diffusion/Kling), timestamp anomalies\n5. Compression artifacts inconsistent with claimed camera origin\n\nScore strictly: 0-30 authentic, 31-69 uncertain, 70-100 deepfake/AI-generated.\nReturn ONLY the JSON.` },
+        ]}]
+      : [{ role: "user", content: `Forensic ${fileType} analysis.\n\n${metaBlock}\n${file.size > 5 * 1024 * 1024 ? "\nNote: File too large for vision — metadata-only analysis." : ""}\n\nAnalyze filename patterns, known AI platform naming conventions (kling_, runway_, sora_, etc), EXIF integrity, and metadata signals.\nScore strictly: 0-30 authentic, 31-69 uncertain, 70-100 deepfake/synthetic.\nReturn ONLY the JSON.` }];
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 4096, system: SYSTEM_PROMPT, messages }),
     });
 
@@ -163,15 +275,13 @@ ${exifBlock}`;
 
     const text  = data.content?.map(i => i.text || "").join("") || "";
     const clean = text.replace(/```json|```/g, "").trim();
-    const start = clean.indexOf("{");
-    const end   = clean.lastIndexOf("}");
+    const start = clean.indexOf("{"), end = clean.lastIndexOf("}");
     if (start === -1 || end === -1) return res.status(422).json({ error: "Invalid model response." });
 
-    const parsed = JSON.parse(clean.slice(start, end + 1));
-    parsed.fileHash   = { sha256 };
-    parsed.fileSize   = file.size;
+    const parsed     = JSON.parse(clean.slice(start, end + 1));
+    parsed.fileHash  = { sha256 };
+    parsed.fileSize  = file.size;
     parsed.usedVision = useVision;
-
     res.json(parsed);
   } catch (err) {
     console.error("[analyze]", err.message);
@@ -182,11 +292,10 @@ ${exifBlock}`;
 });
 
 // ── PDF export ────────────────────────────────────────────────────────────────
-app.post("/api/export", express.json({ limit: "10mb" }), (req, res) => {
+app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
   const { result, fileName, scanDate } = req.body;
-  if (!result || typeof result !== "object" || !fileName) {
+  if (!result || typeof result !== "object" || !fileName)
     return res.status(400).json({ error: "Invalid export data." });
-  }
 
   try {
     const doc = new PDFDocument({ margin: 50, size: "A4" });
@@ -229,7 +338,6 @@ app.post("/api/export", express.json({ limit: "10mb" }), (req, res) => {
       doc.fontSize(9).fillColor("#333").text(String(result.exifAnalysis));
       doc.moveDown(0.5);
     }
-
     if (Array.isArray(result.integrityFlags) && result.integrityFlags.length) {
       line();
       doc.fontSize(11).fillColor("#000").text("INTEGRITY FLAGS");
@@ -263,21 +371,16 @@ app.post("/api/export", express.json({ limit: "10mb" }), (req, res) => {
     doc.fontSize(8).fillColor("#555")
       .text("This report is AI-generated by VERIDEX Forensic AI (Claude, Anthropic) and constitutes a PROBABILISTIC ASSESSMENT ONLY. It is not the certified opinion of a qualified human forensic examiner.")
       .moveDown(0.2)
-      .text("Analysis basis: Images ≤5MB receive visual AI inspection + metadata analysis. All other files receive metadata, filename, and MIME type analysis only. No binary-level signal processing, FFT analysis, or facial landmark detection is performed.")
+      .text("Analysis basis: Images ≤5MB receive visual AI inspection + metadata analysis. All other files receive metadata, filename, and MIME type analysis only.")
       .moveDown(0.2)
-      .text("Evidence Grade reflects analysis confidence only — not legal admissibility or probative value.")
+      .text("SCORING: 0–30% = AUTHENTIC | 31–69% = UNCERTAIN | 70–100% = DEEPFAKE")
       .moveDown(0.2)
-      .text("SCORING: 0–30% = AUTHENTIC (no significant manipulation indicators) | 31–69% = UNCERTAIN (inconclusive) | 70–100% = DEEPFAKE (significant manipulation indicators detected)")
+      .text("This output MUST NOT be used as the sole basis for arrest, search, detention, charging decisions, or court submissions without independent verification by a certified forensic professional.")
       .moveDown(0.2)
-      .text("This output MUST NOT be used as the sole or primary basis for: arrest, search, or detention decisions; charging decisions; court submissions as expert evidence. Before reliance in legal proceedings, this analysis must be independently verified by a qualified, certified digital forensics professional using recognised forensic methodologies (e.g., EnCase, FTK, Autopsy).")
-      .moveDown(0.2)
-      .text("DISCLOSURE OBLIGATION: Where this output is referenced in any court filing, deposition, or expert report, the following must be disclosed: (1) AI-assisted analysis tool used (VERIDEX Forensic AI); (2) AI model: Claude (Anthropic); (3) the limitations described above; (4) whether independent verification was conducted.")
-      .moveDown(0.2)
-      .text("CHAIN OF CUSTODY: Preserve original evidence files unchanged using hardware write-blockers. Document SHA-256 hash before and after analysis. Record use of AI-assisted analysis in case file.");
+      .text("CHAIN OF CUSTODY: Preserve original files using hardware write-blockers. Document SHA-256 hash before and after analysis.");
     doc.moveDown(1.5);
 
     doc.fontSize(7).fillColor("#aaa").text("VERIDEX FORENSIC AI — Powered by Claude AI (Anthropic) — Restricted Access — Societal Enforcement Use Only", { align: "center" });
-    doc.fontSize(7).fillColor("#aaa").text("This disclaimer is a mandatory component of all VERIDEX reports — FORENSIC_DISCLAIMER v1.0 — 2026-05-24", { align: "center" });
     doc.end();
   } catch (err) {
     console.error("[export]", err.message);

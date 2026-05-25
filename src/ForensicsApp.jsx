@@ -1,10 +1,10 @@
 import { useState, useRef } from "react";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const RISK_COLORS  = { HIGH: "#FF2D2D", MEDIUM: "#FF9500", LOW: "#30D158", CLEAN: "#30D158" };
-const RISK_LABELS  = { HIGH: "DEEPFAKE", MEDIUM: "UNCERTAIN", LOW: "LIKELY REAL", CLEAN: "AUTHENTIC" };
+const RISK_COLORS   = { HIGH: "#FF2D2D", MEDIUM: "#FF9500", LOW: "#30D158", CLEAN: "#30D158" };
+const RISK_LABELS   = { HIGH: "DEEPFAKE", MEDIUM: "UNCERTAIN", LOW: "LIKELY REAL", CLEAN: "AUTHENTIC" };
 const VERDICT_COLORS = { DEEPFAKE: "#FF2D2D", UNCERTAIN: "#FF9500", AUTHENTIC: "#30D158" };
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const MAX_FILE_SIZE  = 50 * 1024 * 1024;
 
 // ── Small components ──────────────────────────────────────────────────────────
 function RiskBadge({ level }) {
@@ -46,24 +46,54 @@ function Card({ children, style }) {
 // ── API helpers ───────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
-async function apiAnalyze(file, fileType) {
+async function apiAuth(email, password) {
+  const res = await fetch(`${API_BASE}/api/auth`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Authentication failed");
+  return data;
+}
+
+async function apiRegister(email, password) {
+  const res = await fetch(`${API_BASE}/api/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Registration failed");
+  return data;
+}
+
+async function apiLogout(token) {
+  try {
+    await fetch(`${API_BASE}/api/logout`, { method: "POST", headers: { "x-auth-token": token } });
+  } catch { /* best-effort */ }
+}
+
+async function apiAnalyze(file, fileType, token) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("fileName", file.name);
   formData.append("fileType", fileType);
   const res = await fetch(`${API_BASE}/api/analyze`, {
     method: "POST",
+    headers: { "x-auth-token": token },
     body: formData,
   });
+  if (res.status === 401) throw new Error("Unauthorized");
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || "Analysis failed");
   return data;
 }
 
-async function apiExport(payload) {
+async function apiExport(payload, token) {
   return fetch(`${API_BASE}/api/export`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-auth-token": token },
     body: JSON.stringify(payload),
   });
 }
@@ -78,9 +108,84 @@ function saveCase(result, fileName) {
   localStorage.setItem("veridex_cases", JSON.stringify(cases.slice(0, 50)));
 }
 
+// ── Modal content ─────────────────────────────────────────────────────────────
+function TermsContent() {
+  return (
+    <div style={{ fontSize: 11, color: "#6a8090", lineHeight: 1.8 }}>
+      <p style={{ color: "#FF9500", fontSize: 10, letterSpacing: 1 }}>Effective Date: 2026-05-24 · Version 1.0 · Societal Enforcement Use Only</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>1. AUTHORIZED USE</h4>
+      <p>Access to VERIDEX Forensic AI is granted exclusively to duly authorized societal enforcement officers, licensed forensic investigators, and certified digital forensics professionals acting within the scope of their official duties. By creating an account, you represent and warrant that you fall within one of these categories.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>2. ACCOUNT RESPONSIBILITY</h4>
+      <p>You are solely responsible for maintaining the confidentiality of your account credentials. You must not share your login credentials with any other person. Each account is strictly personal and non-transferable. You must notify your system administrator immediately of any unauthorized use of your account.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>3. PROHIBITED USES</h4>
+      <p>You must not use this system to: conduct unauthorized surveillance of any individual; produce reports intended to mislead any court, tribunal, or agency; analyze media of persons not subject to an active, lawfully authorized investigation; share system access with unauthorized personnel; or use analysis outputs to harass, defame, or harm any individual.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>4. AI DISCLAIMER</h4>
+      <p>All analysis outputs are AI-generated probabilistic assessments — not the certified opinion of a qualified human forensic examiner. Results must be independently verified by a qualified professional before use in any legal proceeding. The system may produce false positives and false negatives.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>5. DATA HANDLING</h4>
+      <p>Uploaded files are processed in server memory only and are not written to disk. Files are discarded immediately after analysis. Images ≤5MB are transmitted to the Anthropic Claude API for AI analysis. GPS coordinates extracted from EXIF data are not sent to the client or included in reports.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>6. DISCLAIMER OF WARRANTIES</h4>
+      <p>THE SYSTEM IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND. AI-GENERATED FORENSIC ANALYSIS IS PROBABILISTIC AND SUBJECT TO ERROR. RESULTS DO NOT CONSTITUTE CONCLUSIVE PROOF OF AUTHENTICITY OR MANIPULATION.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>7. LIMITATION OF LIABILITY</h4>
+      <p>IN NO EVENT SHALL THE DEVELOPER OR AGENCY BE LIABLE FOR WRONGFUL CONVICTION OR ACQUITTAL, DIRECT OR CONSEQUENTIAL DAMAGES, OR LOSS OF DATA OR EVIDENCE INTEGRITY. AUTHORIZED USERS ASSUME ALL RISK ARISING FROM USE OF THIS SYSTEM.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>8. COMPLIANCE</h4>
+      <p>Authorized Users are responsible for ensuring their use of this system complies with all applicable laws, regulations, and agency policies, including CJIS Security Policy, GDPR, and any applicable AI-in-societal-enforcement regulations.</p>
+    </div>
+  );
+}
+
+function PrivacyContent() {
+  return (
+    <div style={{ fontSize: 11, color: "#6a8090", lineHeight: 1.8 }}>
+      <p style={{ color: "#FF9500", fontSize: 10, letterSpacing: 1 }}>Effective Date: 2026-05-24 · Version 1.0 · Societal Enforcement Use Only</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>1. WHAT WE COLLECT</h4>
+      <p><strong style={{ color: "#c8d6e8" }}>Account data:</strong> Your email address and a cryptographically hashed password (scrypt + random salt). Your plaintext password is never stored or logged.</p>
+      <p><strong style={{ color: "#c8d6e8" }}>Session tokens:</strong> A 256-bit cryptographically random session token stored server-side with an 8-hour TTL, and in your browser's localStorage for session persistence.</p>
+      <p><strong style={{ color: "#c8d6e8" }}>Uploaded files:</strong> Loaded into server memory for analysis only. Never written to disk. Discarded immediately after analysis completes.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>2. WHAT WE DO NOT COLLECT</h4>
+      <p>We do not collect or store: uploaded file content beyond the analysis request; GPS coordinates extracted from EXIF data (presence is flagged, coordinates are discarded); analysis results (these are returned to your device only); or any analytics, tracking, or telemetry data.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>3. THIRD-PARTY PROCESSORS</h4>
+      <p><strong style={{ color: "#c8d6e8" }}>Anthropic (Claude AI):</strong> Images ≤5MB and associated file metadata are transmitted to the Anthropic Claude API for AI-powered forensic analysis. This transmission is governed by Anthropic's Terms of Service and Privacy Policy. Agencies operating under CJIS Security Policy or GDPR must verify that Anthropic's data processing terms are compatible with their requirements before submitting sensitive evidence materials.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>4. DATA RETENTION</h4>
+      <p><strong style={{ color: "#c8d6e8" }}>Uploaded files:</strong> Not retained — in-memory only, discarded after analysis.</p>
+      <p><strong style={{ color: "#c8d6e8" }}>Session tokens:</strong> Auto-expire after 8 hours. Invalidated immediately on logout.</p>
+      <p><strong style={{ color: "#c8d6e8" }}>Account data:</strong> Retained until account deletion. Contact your system administrator to request deletion.</p>
+      <p><strong style={{ color: "#c8d6e8" }}>Case history:</strong> Stored in your browser's localStorage only — never transmitted to the server. You may clear it at any time from the Case History screen.</p>
+      <p><strong style={{ color: "#c8d6e8" }}>PDF exports:</strong> Downloaded to your local device only. Not stored server-side.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>5. SECURITY MEASURES</h4>
+      <p>Passwords are hashed using scrypt with a unique random salt per account. Session tokens are 256-bit cryptographically random values. Authentication is rate-limited to 5 attempts per 15 minutes per IP. CORS is restricted to authorized origins. All uploads undergo magic byte validation. A maximum of 3 concurrent uploads are permitted.</p>
+
+      <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>6. YOUR RIGHTS</h4>
+      <p>Under GDPR and applicable data protection laws, you have rights to access, rectify, and erase your personal data. Contact your agency's data protection officer or system administrator to exercise these rights. Note that deletion of your account will invalidate all active sessions.</p>
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function ForensicsApp() {
-  const [screen,       setScreen]       = useState("home");
+  const savedAuth = localStorage.getItem("veridex_auth");
+
+  const [screen,       setScreen]       = useState(savedAuth ? "home" : "login");
+  const [authToken,    setAuthToken]    = useState(savedAuth || "");
+  const [authMode,     setAuthMode]     = useState("login"); // "login" | "signup"
+  const [email,        setEmail]        = useState("");
+  const [password,     setPassword]     = useState("");
+  const [confirmPw,    setConfirmPw]    = useState("");
+  const [termsChecked, setTermsChecked] = useState(false);
+  const [authLoading,  setAuthLoading]  = useState(false);
+  const [modal,        setModal]        = useState(null); // null | "terms" | "privacy"
   const [file,         setFile]         = useState(null);
   const [fileType,     setFileType]     = useState(null);
   const [result,       setResult]       = useState(null);
@@ -104,6 +209,66 @@ export default function ForensicsApp() {
     "Generating authenticity report...",
   ];
 
+  // ── Auth handlers ───────────────────────────────────────────────────────────
+  function switchAuthMode(mode) {
+    setAuthMode(mode);
+    setError(null);
+    setEmail("");
+    setPassword("");
+    setConfirmPw("");
+    setTermsChecked(false);
+  }
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const data = await apiAuth(email, password);
+      localStorage.setItem("veridex_auth", data.token);
+      setAuthToken(data.token);
+      setScreen("home");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleSignup(e) {
+    e.preventDefault();
+    if (password !== confirmPw)  { setError("Passwords do not match."); return; }
+    if (password.length < 8)     { setError("Password must be at least 8 characters."); return; }
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const data = await apiRegister(email, password);
+      localStorage.setItem("veridex_auth", data.token);
+      setAuthToken(data.token);
+      setScreen("home");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleLogout() {
+    await apiLogout(authToken);
+    localStorage.removeItem("veridex_auth");
+    setAuthToken("");
+    setScreen("login");
+    switchAuthMode("login");
+  }
+
+  function handleUnauthorized() {
+    localStorage.removeItem("veridex_auth");
+    setAuthToken("");
+    setError("Session expired. Please log in again.");
+    setScreen("login");
+  }
+
+  // ── File / scan handlers ────────────────────────────────────────────────────
   async function handleFile(e) {
     const f = e.target.files[0];
     if (!f) return;
@@ -122,7 +287,7 @@ export default function ForensicsApp() {
       await new Promise(r => setTimeout(r, 600));
     }
     try {
-      const analysis = await apiAnalyze(f, type);
+      const analysis = await apiAnalyze(f, type, authToken);
       setScanProgress(100);
       setScanStep("Complete.");
       await new Promise(r => setTimeout(r, 400));
@@ -131,6 +296,7 @@ export default function ForensicsApp() {
       setCases(loadCases());
       setScreen("report");
     } catch (err) {
+      if (err.message === "Unauthorized") { handleUnauthorized(); return; }
       setError(err.message);
       setScreen("home");
     }
@@ -139,7 +305,8 @@ export default function ForensicsApp() {
   async function handleExport() {
     setExporting(true);
     try {
-      const res = await apiExport({ result, fileName: file?.name, scanDate });
+      const res = await apiExport({ result, fileName: file?.name, scanDate }, authToken);
+      if (res.status === 401) { handleUnauthorized(); return; }
       if (!res.ok) { setError("Export failed. Try again."); return; }
       const blob = await res.blob();
       const url  = URL.createObjectURL(blob);
@@ -163,9 +330,10 @@ export default function ForensicsApp() {
     setScreen("report");
   }
 
+  // ── Styles ──────────────────────────────────────────────────────────────────
   const S = {
     shell:    { minHeight: "100vh", background: "#080c14", display: "flex", justifyContent: "center", fontFamily: "'Courier New', monospace" },
-    phone:    { width: 390, minHeight: "100vh", background: "#0b0f1a", display: "flex", flexDirection: "column" },
+    phone:    { width: 390, minHeight: "100vh", background: "#0b0f1a", display: "flex", flexDirection: "column", position: "relative" },
     topBar:   { background: "#0d1220", borderBottom: "1px solid #1e2d4a", padding: "14px 20px 10px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 },
     logo:     { fontSize: 13, fontWeight: 700, color: "#00d4ff", letterSpacing: 3 },
     badge:    { background: "#00d4ff22", border: "1px solid #00d4ff44", borderRadius: 4, padding: "2px 8px", fontSize: 9, color: "#00d4ff", letterSpacing: 1.5 },
@@ -174,15 +342,24 @@ export default function ForensicsApp() {
     btnGhost: { flex: 1, padding: 14, background: "#0d1220", border: "1px solid #1e2d4a", borderRadius: 12, color: "#4a6080", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 },
   };
 
+  const inputStyle = {
+    width: "100%", boxSizing: "border-box", background: "#0d1220",
+    border: "1px solid #1e2d4a", borderRadius: 10, padding: "14px 16px",
+    color: "#e8eaf6", fontFamily: "monospace", fontSize: 13, outline: "none",
+  };
+
   return (
     <div style={S.shell}>
       <style>{`
-        @keyframes scanline{0%{transform:translateY(-100%)}100%{transform:translateY(100vh)}}
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
         @keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes glow{0%,100%{box-shadow:0 0 20px #00d4ff44}50%{box-shadow:0 0 40px #00d4ff88}}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#0b0f1a}::-webkit-scrollbar-thumb{background:#1e2d4a;border-radius:2px}
+        input:focus{border-color:#00d4ff66 !important}
+        .tab-btn{flex:1;padding:10px 0;border-radius:10px;font-size:10px;font-weight:700;cursor:pointer;font-family:monospace;letter-spacing:1.5px;transition:all .2s}
+        .tab-btn.active{background:#00d4ff11;border:1px solid #00d4ff44;color:#00d4ff}
+        .tab-btn.inactive{background:#0d1220;border:1px solid #1e2d4a;color:#4a6080}
         .legal-tab{flex:1;padding:8px;background:#0d1220;border:1px solid #1e2d4a;border-radius:8px;color:#4a6080;font-size:9px;font-weight:700;cursor:pointer;font-family:monospace;letter-spacing:1px;text-align:center}
         .legal-tab.active{background:#00d4ff11;border-color:#00d4ff44;color:#00d4ff}
         .legal-body{max-height:520px;overflow-y:auto;font-size:11px;color:#6a8090;line-height:1.8;padding:4px}
@@ -195,21 +372,150 @@ export default function ForensicsApp() {
         .legal-body table{width:100%;border-collapse:collapse;margin-bottom:10px;font-size:10px}
         .legal-body th{color:#4a6080;text-align:left;padding:4px 6px;border-bottom:1px solid #1e2d4a}
         .legal-body td{color:#6a8090;padding:4px 6px;border-bottom:1px solid #0d1220}
+        input[type=checkbox]{accent-color:#00d4ff;width:15px;height:15px;cursor:pointer;flex-shrink:0;margin-top:2px}
+        .modal-link{background:none;border:none;color:#00d4ff;font-family:monospace;font-size:11px;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px}
       `}</style>
       <div style={S.phone}>
 
-        {/* Top bar */}
+        {/* ── Top bar ─────────────────────────────────────────────────────── */}
         <div style={S.topBar}>
           <div style={S.logo}>VERIDEX</div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <div style={S.badge}>SOCIETAL ENFORCEMENT</div>
+            {screen !== "login" && (
+              <button onClick={handleLogout} style={{ background: "none", border: "none", color: "#2a3a55", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>
+                LOGOUT
+              </button>
+            )}
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#30D158", animation: "pulse 2s infinite", boxShadow: "0 0 8px #30D158" }} />
           </div>
         </div>
 
         <div style={S.content}>
 
-          {/* HOME */}
+          {/* ── LOGIN / SIGNUP ──────────────────────────────────────────────── */}
+          {screen === "login" && (
+            <div style={{ animation: "fadeIn .4s ease" }}>
+
+              {/* Header */}
+              <div style={{ marginBottom: 24, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3, marginBottom: 10 }}>FORENSIC AI DETECTION SUITE</div>
+                <div style={{ fontSize: 26, color: "#e8eaf6", fontWeight: 700, marginBottom: 6, letterSpacing: 2 }}>VERIDEX</div>
+                <div style={{ fontSize: 10, color: "#4a6080", marginBottom: 16 }}>v2.0 · Forensic Media Analysis</div>
+
+                {/* Disclaimer */}
+                <div style={{ background: "#FF2D2D08", border: "1px solid #FF2D2D22", borderRadius: 8, padding: "10px 14px", textAlign: "left" }}>
+                  <div style={{ fontSize: 9, color: "#FF2D2D", letterSpacing: 2, marginBottom: 4, fontWeight: 700 }}>⚠ RESTRICTED ACCESS</div>
+                  <div style={{ fontSize: 10, color: "#7a5050", lineHeight: 1.6 }}>
+                    Authorized access only. This tool is for societal enforcement purposes. Unauthorized access is prohibited and may result in criminal prosecution.
+                  </div>
+                </div>
+              </div>
+
+              {/* Mode tabs */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+                <button className={`tab-btn ${authMode === "login" ? "active" : "inactive"}`} onClick={() => switchAuthMode("login")}>LOGIN</button>
+                <button className={`tab-btn ${authMode === "signup" ? "active" : "inactive"}`} onClick={() => switchAuthMode("signup")}>CREATE ACCOUNT</button>
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div style={{ background: "#FF2D2D11", border: "1px solid #FF2D2D44", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#FF6060" }}>
+                  {error}
+                </div>
+              )}
+
+              {/* LOGIN form */}
+              {authMode === "login" && (
+                <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
+                    <input
+                      type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      placeholder="officer@agency.gov" autoFocus required
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>PASSWORD</div>
+                    <input
+                      type="password" value={password} onChange={e => setPassword(e.target.value)}
+                      placeholder="••••••••••" required
+                      style={{ ...inputStyle, letterSpacing: "3px" }}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    style={{ ...S.btn, marginTop: 4, animation: "glow 3s infinite", opacity: authLoading ? 0.6 : 1 }}
+                    disabled={authLoading}
+                  >
+                    {authLoading ? "AUTHENTICATING..." : "⊕ LOGIN"}
+                  </button>
+                </form>
+              )}
+
+              {/* SIGNUP form */}
+              {authMode === "signup" && (
+                <form onSubmit={handleSignup} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
+                    <input
+                      type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      placeholder="officer@agency.gov" autoFocus required
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>
+                      PASSWORD <span style={{ color: "#2a3a55" }}>— min 8 characters</span>
+                    </div>
+                    <input
+                      type="password" value={password} onChange={e => setPassword(e.target.value)}
+                      placeholder="••••••••••" required
+                      style={{ ...inputStyle, letterSpacing: "3px" }}
+                    />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>CONFIRM PASSWORD</div>
+                    <input
+                      type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+                      placeholder="••••••••••" required
+                      style={{ ...inputStyle, letterSpacing: "3px" }}
+                    />
+                  </div>
+
+                  {/* T&C checkbox */}
+                  <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", background: "#0d1220", border: "1px solid #1e2d4a", borderRadius: 10, padding: "12px 14px" }}>
+                    <input
+                      type="checkbox" checked={termsChecked}
+                      onChange={e => setTermsChecked(e.target.checked)}
+                    />
+                    <span style={{ fontSize: 11, color: "#6a8090", lineHeight: 1.6 }}>
+                      I confirm I am an authorized societal enforcement officer or licensed forensic professional, and I agree to the{" "}
+                      <button type="button" className="modal-link" onClick={() => setModal("terms")}>Terms &amp; Conditions</button>
+                      {" "}and{" "}
+                      <button type="button" className="modal-link" onClick={() => setModal("privacy")}>Privacy Policy</button>.
+                    </span>
+                  </label>
+
+                  <button
+                    type="submit"
+                    style={{ ...S.btn, opacity: (termsChecked && !authLoading) ? 1 : 0.35, cursor: (termsChecked && !authLoading) ? "pointer" : "not-allowed", animation: termsChecked ? "glow 3s infinite" : "none" }}
+                    disabled={!termsChecked || authLoading}
+                  >
+                    {authLoading ? "CREATING ACCOUNT..." : "⊕ CREATE ACCOUNT"}
+                  </button>
+                </form>
+              )}
+
+              <div style={{ textAlign: "center", fontSize: 9, color: "#1e2d4a", marginTop: 24, lineHeight: 1.8 }}>
+                VERIDEX FORENSIC AI · CLASSIFIED<br />
+                SOCIETAL ENFORCEMENT USE ONLY
+              </div>
+            </div>
+          )}
+
+          {/* ── HOME ────────────────────────────────────────────────────────── */}
           {screen === "home" && (
             <div style={{ animation: "fadeIn .4s ease" }}>
               <div style={{ marginBottom: 24 }}>
@@ -217,13 +523,13 @@ export default function ForensicsApp() {
                 <div style={{ fontSize: 20, color: "#e8eaf6", fontWeight: 700, lineHeight: 1.3, marginBottom: 8 }}>Media Authenticity<br />Analysis System</div>
                 <div style={{ fontSize: 12, color: "#4a6080", lineHeight: 1.6 }}>Upload video, image, or audio for AI manipulation detection, deepfake analysis, and identity modification screening.</div>
               </div>
-              {error && <div style={{ background: "#FF2D2D11", border: "1px solid #FF2D2D44", borderRadius: 10, padding: 12, marginBottom: 20, fontSize: 12, color: "#FF2D2D" }}>{error}</div>}
+              {error && <div style={{ background: "#FF2D2D11", border: "1px solid #FF2D2D44", borderRadius: 10, padding: 12, marginBottom: 20, fontSize: 12, color: "#FF6060" }}>{error}</div>}
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
                 {[
-                  { icon: "◈", label: "Deepfake Video Detection", desc: "GAN artifacts, temporal inconsistencies, face swap markers" },
-                  { icon: "◉", label: "AI Image Analysis", desc: "Vision AI · EXIF integrity · diffusion fingerprints" },
-                  { icon: "◎", label: "Voice Clone Detection", desc: "Synthetic audio markers, frequency pattern analysis" },
-                  { icon: "◍", label: "Identity Modification Scan", desc: "BBL, rhinoplasty, facial fillers, biometric evasion markers" },
+                  { icon: "◈", label: "Deepfake Video Detection",    desc: "GAN artifacts, temporal inconsistencies, face swap markers" },
+                  { icon: "◉", label: "AI Image Analysis",           desc: "Vision AI · EXIF integrity · diffusion fingerprints" },
+                  { icon: "◎", label: "Voice Clone Detection",       desc: "Synthetic audio markers, frequency pattern analysis" },
+                  { icon: "◍", label: "Identity Modification Scan",  desc: "BBL, rhinoplasty, facial fillers, biometric evasion markers" },
                 ].map((cap, i) => (
                   <Card key={i} style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
                     <div style={{ fontSize: 20, color: "#00d4ff", lineHeight: 1, marginTop: 2 }}>{cap.icon}</div>
@@ -250,7 +556,7 @@ export default function ForensicsApp() {
             </div>
           )}
 
-          {/* SCANNING */}
+          {/* ── SCANNING ─────────────────────────────────────────────────────── */}
           {screen === "scanning" && (
             <div style={{ animation: "fadeIn .3s ease", textAlign: "center" }}>
               <div style={{ marginBottom: 40 }}>
@@ -278,13 +584,12 @@ export default function ForensicsApp() {
             </div>
           )}
 
-          {/* REPORT */}
+          {/* ── REPORT ───────────────────────────────────────────────────────── */}
           {screen === "report" && result && (
             <div style={{ animation: "fadeIn .4s ease" }}>
               <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 3, marginBottom: 6 }}>FORENSIC REPORT · {scanDate}</div>
               <div style={{ fontSize: 11, color: "#2a5a7a", marginBottom: 16, wordBreak: "break-all" }}>FILE: {file?.name}</div>
 
-              {/* Analysis type badges */}
               <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
                 <span style={{ background: result.usedVision ? "#30D15822" : "#FF950022", border: `1px solid ${result.usedVision ? "#30D15844" : "#FF950044"}`, borderRadius: 6, padding: "3px 10px", fontSize: 10, color: result.usedVision ? "#30D158" : "#FF9500", fontFamily: "monospace" }}>
                   {result.usedVision ? "◉ VISION ANALYSIS" : "◎ METADATA ONLY"}
@@ -294,7 +599,6 @@ export default function ForensicsApp() {
                 </span>
               </div>
 
-              {/* Verdict banner */}
               {result.verdict && (
                 <div style={{ background: `${VERDICT_COLORS[result.verdict]}22`, border: `2px solid ${VERDICT_COLORS[result.verdict]}`, borderRadius: 12, padding: "16px 20px", marginBottom: 12, textAlign: "center" }}>
                   <div style={{ fontSize: 9, color: VERDICT_COLORS[result.verdict], letterSpacing: 3, marginBottom: 4 }}>FORENSIC VERDICT</div>
@@ -302,7 +606,6 @@ export default function ForensicsApp() {
                 </div>
               )}
 
-              {/* Score */}
               <Card style={{ marginBottom: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                   <div>
@@ -315,7 +618,6 @@ export default function ForensicsApp() {
                 <div style={{ fontSize: 12, color: "#8a9ab5", lineHeight: 1.6 }}>{result.summary}</div>
               </Card>
 
-              {/* File integrity */}
               {result.fileHash && (
                 <>
                   <SectionLabel>FILE INTEGRITY</SectionLabel>
@@ -330,7 +632,6 @@ export default function ForensicsApp() {
                 </>
               )}
 
-              {/* EXIF analysis */}
               {result.exifAnalysis && (
                 <>
                   <SectionLabel>EXIF / METADATA ANALYSIS</SectionLabel>
@@ -340,7 +641,6 @@ export default function ForensicsApp() {
                 </>
               )}
 
-              {/* Integrity flags */}
               {result.integrityFlags?.length > 0 && (
                 <>
                   <SectionLabel>INTEGRITY FLAGS</SectionLabel>
@@ -355,7 +655,6 @@ export default function ForensicsApp() {
                 </>
               )}
 
-              {/* Findings */}
               <SectionLabel>DETECTION FINDINGS</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
                 {result.findings?.map((f, i) => (
@@ -381,7 +680,6 @@ export default function ForensicsApp() {
                 ))}
               </div>
 
-              {/* Recommendations */}
               <SectionLabel>INVESTIGATOR ACTIONS</SectionLabel>
               <Card style={{ marginBottom: 16 }}>
                 {result.recommendations?.map((r, i) => (
@@ -392,24 +690,21 @@ export default function ForensicsApp() {
                 ))}
               </Card>
 
-              {/* Case notes */}
               <SectionLabel>CASE FILE NOTES</SectionLabel>
               <Card style={{ marginBottom: 24, borderLeft: "3px solid #30D158", background: "#0a1520" }}>
                 <div style={{ fontSize: 11, color: "#4a8060", lineHeight: 1.7, fontStyle: "italic" }}>{result.caseNotes}</div>
               </Card>
 
-              {/* AI Disclaimer banner */}
               <div style={{ background: "#FF950011", border: "1px solid #FF950033", borderRadius: 10, padding: "12px 14px", marginBottom: 16 }}>
                 <div style={{ fontSize: 9, color: "#FF9500", letterSpacing: 2, marginBottom: 6, fontWeight: 700 }}>⚠ AI ANALYSIS DISCLAIMER</div>
                 <div style={{ fontSize: 10, color: "#8a7060", lineHeight: 1.6 }}>
-                  This report is AI-generated (Claude, Anthropic) and constitutes a <strong style={{color:"#c8a070"}}>probabilistic assessment only</strong> — not a certified forensic expert opinion. Results must be independently verified by a qualified digital forensics professional before use in any legal proceeding.
+                  This report is AI-generated (Claude, Anthropic) and constitutes a <strong style={{color:"#c8a070"}}>probabilistic assessment only</strong> — not a certified forensic expert opinion. Results must be independently verified before use in any legal proceeding.
                 </div>
                 <button onClick={() => setScreen("legal")} style={{ background: "none", border: "none", color: "#FF9500", fontSize: 9, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, padding: 0, marginTop: 8, textDecoration: "underline" }}>
                   VIEW FULL FORENSIC DISCLAIMER →
                 </button>
               </div>
 
-              {/* Actions */}
               <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
                 <button onClick={reset} style={S.btnGhost}>← NEW SCAN</button>
                 <button onClick={handleExport} disabled={exporting} style={{ flex: 2, padding: 14, background: "linear-gradient(135deg,#00d4ff22,#0066ff22)", border: "1px solid #00d4ff66", borderRadius: 12, color: "#00d4ff", fontSize: 12, fontWeight: 700, cursor: exporting ? "not-allowed" : "pointer", fontFamily: "monospace", letterSpacing: 1, opacity: exporting ? 0.6 : 1 }}>
@@ -420,7 +715,7 @@ export default function ForensicsApp() {
             </div>
           )}
 
-          {/* LEGAL DOCUMENTS */}
+          {/* ── LEGAL DOCUMENTS ──────────────────────────────────────────────── */}
           {screen === "legal" && (
             <div style={{ animation: "fadeIn .4s ease" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -470,11 +765,11 @@ export default function ForensicsApp() {
                   <h2>TERMS OF SERVICE</h2>
                   <p><strong style={{color:"#FF9500"}}>Effective Date:</strong> 2026-05-24 · Version 1.0 · Societal Enforcement Use Only</p>
                   <h3>1. Authorized Use</h3>
-                  <p>Licensed exclusively for: forensic analysis of digital media in active authorized investigations, generating forensic reports, agency training using non-sensitive media.</p>
+                  <p>Licensed exclusively for: forensic analysis of digital media in active authorized investigations, generating forensic reports, and agency training using non-sensitive media.</p>
                   <h3>2. Access Controls</h3>
                   <ul>
                     <li>Access is restricted to authorized personnel acting within official duties</li>
-                    <li>Access credentials must not be shared with unauthorized individuals</li>
+                    <li>Account credentials must not be shared with unauthorized individuals</li>
                     <li>Use is subject to agency oversight and audit</li>
                   </ul>
                   <h3>3. Prohibited Uses</h3>
@@ -483,16 +778,14 @@ export default function ForensicsApp() {
                     <li>Producing reports intended to mislead any court or tribunal</li>
                     <li>Circumventing, testing, or attacking system security</li>
                     <li>Processing classified materials beyond system certification</li>
-                    <li>Sharing access with unauthorized personnel</li>
+                    <li>Sharing account access with unauthorized personnel</li>
                     <li>Using outputs to harass, defame, or harm any individual</li>
                   </ul>
                   <h3>4. Disclaimer of Warranties</h3>
                   <p>THE SYSTEM IS PROVIDED "AS IS". AI-GENERATED FORENSIC ANALYSIS IS PROBABILISTIC AND SUBJECT TO ERROR. RESULTS DO NOT CONSTITUTE CONCLUSIVE PROOF OF AUTHENTICITY OR MANIPULATION.</p>
                   <h3>5. Limitation of Liability</h3>
                   <p>IN NO EVENT SHALL THE DEVELOPER OR AGENCY BE LIABLE FOR WRONGFUL CONVICTION OR ACQUITTAL, DIRECT OR CONSEQUENTIAL DAMAGES, OR LOSS OF DATA OR EVIDENCE INTEGRITY. AUTHORIZED USERS ASSUME ALL RISK.</p>
-                  <h3>6. Evidence Standards</h3>
-                  <p>Reports do not constitute certified forensic expert opinion. They are investigative tools that must be reviewed and validated by a qualified professional before being presented as expert evidence.</p>
-                  <h3>7. Data Handling Compliance</h3>
+                  <h3>6. Data Handling Compliance</h3>
                   <p>Authorized Users are responsible for compliance with CJIS Security Policy, GDPR, agency-specific evidence handling policies, and applicable AI-in-societal-enforcement laws.</p>
                 </>}
                 {legalTab === 2 && <>
@@ -500,27 +793,30 @@ export default function ForensicsApp() {
                   <p><strong style={{color:"#FF9500"}}>Effective Date:</strong> 2026-05-24 · Version 1.0 · Societal Enforcement Use Only</p>
                   <h3>1. Data Processed</h3>
                   <ul>
+                    <li><strong style={{color:"#c8d6e8"}}>Account data:</strong> Email address and scrypt-hashed password. Plaintext passwords are never stored.</li>
+                    <li><strong style={{color:"#c8d6e8"}}>Session tokens:</strong> 256-bit random, 8-hour TTL, stored in browser localStorage.</li>
                     <li><strong style={{color:"#c8d6e8"}}>Media files:</strong> Loaded into server memory only. NOT written to disk. Discarded after analysis.</li>
                     <li><strong style={{color:"#c8d6e8"}}>Images ≤5MB:</strong> Transmitted to Anthropic Claude API in base64 for AI analysis.</li>
-                    <li><strong style={{color:"#c8d6e8"}}>EXIF metadata:</strong> Extracted for analysis. GPS coordinates extracted but NOT sent to frontend or included in reports — flagged presence only.</li>
-                    <li><strong style={{color:"#c8d6e8"}}>SHA-256 hash:</strong> Computed for chain-of-custody, included in reports.</li>
+                    <li><strong style={{color:"#c8d6e8"}}>EXIF metadata:</strong> GPS coordinates extracted but NOT sent to frontend or reports — presence flagged only.</li>
                     <li><strong style={{color:"#c8d6e8"}}>Case history:</strong> Stored in browser localStorage only — never transmitted to server.</li>
                   </ul>
                   <h3>2. Third-Party Processors</h3>
-                  <p><strong style={{color:"#FF9500"}}>Anthropic (Claude AI):</strong> Image content (≤5MB) and file metadata transmitted to Anthropic API under their Terms of Service. Agencies under CJIS/GDPR must verify compatibility before use with sensitive evidence.</p>
+                  <p><strong style={{color:"#FF9500"}}>Anthropic (Claude AI):</strong> Image content (≤5MB) and file metadata transmitted to Anthropic API. Agencies under CJIS/GDPR must verify compatibility before submitting sensitive evidence.</p>
                   <h3>3. Data Retention</h3>
                   <table><thead><tr><th>Data Type</th><th>Retention</th></tr></thead><tbody>
                     <tr><td>Uploaded files</td><td>Not retained — in-memory only</td></tr>
-                    <tr><td>Analysis results</td><td>Browser localStorage only (device-local)</td></tr>
-                    <tr><td>PDF exports</td><td>User's local device</td></tr>
+                    <tr><td>Session tokens</td><td>8 hours auto-expiry</td></tr>
+                    <tr><td>Account data</td><td>Until account deletion</td></tr>
+                    <tr><td>Case history</td><td>Browser localStorage — device-local</td></tr>
+                    <tr><td>PDF exports</td><td>User's local device only</td></tr>
                   </tbody></table>
                   <h3>4. Security Measures</h3>
                   <ul>
-                    <li>Rate limiting on analysis requests (30 per 15 min)</li>
+                    <li>scrypt password hashing with unique random salt per account</li>
+                    <li>Rate limiting on auth: 5 attempts per 15 min per IP</li>
                     <li>Magic byte validation on all uploads</li>
-                    <li>CORS restricted to localhost</li>
+                    <li>CORS restricted to authorized origins</li>
                     <li>Max 3 concurrent uploads</li>
-                    <li>No user accounts or credentials stored server-side</li>
                   </ul>
                 </>}
                 {legalTab === 3 && <>
@@ -549,13 +845,10 @@ export default function ForensicsApp() {
                     <li>Presenting AI analysis as conclusive expert opinion without verification</li>
                     <li>Altering or selectively presenting System outputs to mislead</li>
                     <li>Attempting to bypass or attack any security feature</li>
-                    <li>Processing intimate images or images of minors outside authorized investigation</li>
                   </ul>
-                  <h3>4. Sensitive Material</h3>
-                  <p>When submitting sensitive material (CSAM investigations, victim imagery, classified material): ensure Agency authorization is in place; note that image content is transmitted to Anthropic API; maintain strict chain-of-custody documentation.</p>
-                  <h3>5. Consequences of Misuse</h3>
+                  <h3>4. Consequences of Misuse</h3>
                   <ul>
-                    <li>Immediate revocation of System access</li>
+                    <li>Immediate revocation of account access</li>
                     <li>Disciplinary proceedings under Agency policy</li>
                     <li>Civil or criminal liability</li>
                     <li>Referral to professional licensing bodies</li>
@@ -566,7 +859,7 @@ export default function ForensicsApp() {
             </div>
           )}
 
-          {/* CASES */}
+          {/* ── CASES ────────────────────────────────────────────────────────── */}
           {screen === "cases" && (
             <div style={{ animation: "fadeIn .4s ease" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -601,8 +894,37 @@ export default function ForensicsApp() {
             </div>
           )}
 
-        </div>
-      </div>
+        </div>{/* end S.content */}
+
+        {/* ── T&C / Privacy modals (overlays inside phone frame) ────────────── */}
+        {modal && (
+          <div style={{ position: "absolute", inset: 0, background: "rgba(4,8,18,.96)", zIndex: 50, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ background: "#0d1220", borderBottom: "1px solid #1e2d4a", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 2, fontFamily: "monospace", fontWeight: 700 }}>
+                {modal === "terms" ? "TERMS & CONDITIONS" : "PRIVACY POLICY"}
+              </div>
+              <button
+                onClick={() => setModal(null)}
+                style={{ background: "#FF2D2D22", border: "1px solid #FF2D2D44", borderRadius: 6, color: "#FF6060", fontSize: 10, cursor: "pointer", fontFamily: "monospace", padding: "5px 12px", letterSpacing: 1 }}
+              >
+                ✕ CLOSE
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 40px" }}>
+              {modal === "terms" ? <TermsContent /> : <PrivacyContent />}
+            </div>
+            <div style={{ background: "#0d1220", borderTop: "1px solid #1e2d4a", padding: "12px 20px", flexShrink: 0 }}>
+              <button
+                onClick={() => setModal(null)}
+                style={{ width: "100%", padding: 12, background: "linear-gradient(135deg,#00d4ff22,#0066ff22)", border: "1px solid #00d4ff66", borderRadius: 10, color: "#00d4ff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "monospace", letterSpacing: 2 }}
+              >
+                ✓ CLOSE &amp; RETURN TO SIGNUP
+              </button>
+            </div>
+          </div>
+        )}
+
+      </div>{/* end S.phone */}
     </div>
   );
 }
