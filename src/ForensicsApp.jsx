@@ -98,6 +98,25 @@ async function apiExport(payload, token) {
   });
 }
 
+async function apiChangeEmail(token, newEmail, password) {
+  const res = await fetch(`${API_BASE}/api/me/email`, { method: "PUT", headers: { "Content-Type": "application/json", "x-auth-token": token }, body: JSON.stringify({ newEmail, password }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Email update failed");
+  return data;
+}
+async function apiChangePassword(token, currentPassword, newPassword) {
+  const res = await fetch(`${API_BASE}/api/me/password`, { method: "PUT", headers: { "Content-Type": "application/json", "x-auth-token": token }, body: JSON.stringify({ currentPassword, newPassword }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Password update failed");
+  return data;
+}
+async function apiDeleteAccount(token, password) {
+  const res = await fetch(`${API_BASE}/api/me`, { method: "DELETE", headers: { "Content-Type": "application/json", "x-auth-token": token }, body: JSON.stringify({ password }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Deletion failed");
+}
+function emailFromToken(t) { try { return JSON.parse(atob(t.split(".")[1])).sub||"" } catch { return "" } }
+
 // ── Case storage ──────────────────────────────────────────────────────────────
 function loadCases() { return JSON.parse(localStorage.getItem("veridex_cases") || "[]"); }
 function saveCase(result, fileName) {
@@ -195,7 +214,18 @@ export default function ForensicsApp() {
   const [cases,        setCases]        = useState(loadCases);
   const [exporting,    setExporting]    = useState(false);
   const [scanDate,     setScanDate]     = useState("");
-  const [legalTab,     setLegalTab]     = useState(0);
+  const [legalTab,       setLegalTab]       = useState(0);
+  const [userEmail,      setUserEmail]      = useState(savedAuth ? emailFromToken(savedAuth) : "");
+  const [settingsTab,    setSettingsTab]    = useState("email");
+  const [newEmail,       setNewEmail]       = useState("");
+  const [emailPw,        setEmailPw]        = useState("");
+  const [curPw,          setCurPw]          = useState("");
+  const [newPw,          setNewPw]          = useState("");
+  const [confirmNewPw,   setConfirmNewPw]   = useState("");
+  const [deletePw,       setDeletePw]       = useState("");
+  const [deleteConfirm,  setDeleteConfirm]  = useState(false);
+  const [settingsMsg,    setSettingsMsg]    = useState(null);
+  const [settingsLoading,setSettingsLoading]= useState(false);
   const fileRef = useRef();
 
   const SCAN_STEPS = [
@@ -266,6 +296,38 @@ export default function ForensicsApp() {
     setAuthToken("");
     setError("Session expired. Please log in again.");
     setScreen("login");
+  }
+
+  async function handleChangeEmail(e) {
+    e.preventDefault();
+    setSettingsLoading(true); setSettingsMsg(null);
+    try {
+      const data = await apiChangeEmail(authToken, newEmail, emailPw);
+      localStorage.setItem("veridex_auth", data.token);
+      setAuthToken(data.token);
+      setUserEmail(newEmail.toLowerCase().trim());
+      setNewEmail(""); setEmailPw("");
+      setSettingsMsg({ text: "Email updated successfully.", type: "success" });
+    } catch (err) { setSettingsMsg({ text: err.message, type: "error" }); }
+    finally { setSettingsLoading(false); }
+  }
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    if (newPw !== confirmNewPw) { setSettingsMsg({ text: "Passwords do not match.", type: "error" }); return; }
+    if (newPw.length < 8) { setSettingsMsg({ text: "Min 8 characters.", type: "error" }); return; }
+    setSettingsLoading(true); setSettingsMsg(null);
+    try {
+      await apiChangePassword(authToken, curPw, newPw);
+      setCurPw(""); setNewPw(""); setConfirmNewPw("");
+      setSettingsMsg({ text: "Password updated.", type: "success" });
+    } catch (err) { setSettingsMsg({ text: err.message, type: "error" }); }
+    finally { setSettingsLoading(false); }
+  }
+  async function handleDeleteAccount(e) {
+    e.preventDefault();
+    setSettingsLoading(true); setSettingsMsg(null);
+    try { await apiDeleteAccount(authToken, deletePw); await handleLogout(); }
+    catch (err) { setSettingsMsg({ text: err.message, type: "error" }); setSettingsLoading(false); }
   }
 
   // ── File / scan handlers ────────────────────────────────────────────────────
@@ -383,9 +445,10 @@ export default function ForensicsApp() {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <div style={S.badge}>SOCIETAL ENFORCEMENT</div>
             {screen !== "login" && (
-              <button onClick={handleLogout} style={{ background: "none", border: "none", color: "#2a3a55", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>
-                LOGOUT
-              </button>
+              <>
+                <button onClick={() => { setSettingsMsg(null); setDeleteConfirm(false); setScreen("settings"); }} style={{ background: "none", border: "none", color: "#2a3a55", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>SETTINGS</button>
+                <button onClick={handleLogout} style={{ background: "none", border: "none", color: "#2a3a55", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>LOGOUT</button>
+              </>
             )}
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#30D158", animation: "pulse 2s infinite", boxShadow: "0 0 8px #30D158" }} />
           </div>
@@ -451,6 +514,9 @@ export default function ForensicsApp() {
                   >
                     {authLoading ? "AUTHENTICATING..." : "⊕ LOGIN"}
                   </button>
+                  <div style={{ textAlign: "center", marginTop: 10 }}>
+                    <button type="button" onClick={() => switchAuthMode("forgot")} style={{ background: "none", border: "none", color: "#4a6080", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, textDecoration: "underline" }}>Forgot password?</button>
+                  </div>
                 </form>
               )}
 
@@ -506,6 +572,16 @@ export default function ForensicsApp() {
                     {authLoading ? "CREATING ACCOUNT..." : "⊕ CREATE ACCOUNT"}
                   </button>
                 </form>
+              )}
+
+              {authMode === "forgot" && (
+                <div style={{ textAlign: "center", padding: "8px 0" }}>
+                  <div style={{ fontSize: 13, color: "#e8eaf6", marginBottom: 10, fontWeight: 700, letterSpacing: 1 }}>PASSWORD RESET</div>
+                  <div style={{ fontSize: 11, color: "#6a8090", lineHeight: 1.8, marginBottom: 20 }}>
+                    Contact your system administrator with your registered email address to have your password reset.
+                  </div>
+                  <button onClick={() => switchAuthMode("login")} style={{ ...S.btnGhost, width: "100%" }}>← BACK TO LOGIN</button>
+                </div>
               )}
 
               <div style={{ textAlign: "center", fontSize: 9, color: "#1e2d4a", marginTop: 24, lineHeight: 1.8 }}>
@@ -712,6 +788,79 @@ export default function ForensicsApp() {
                 </button>
               </div>
               <div style={{ textAlign: "center", fontSize: 9, color: "#1e2d4a", marginBottom: 10 }}>VERIDEX FORENSIC AI · CLASSIFIED · SOCIETAL ENFORCEMENT USE ONLY</div>
+            </div>
+          )}
+
+          {/* ── SETTINGS ─────────────────────────────────────────────────────── */}
+          {screen === "settings" && (
+            <div style={{ animation: "fadeIn .4s ease" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3 }}>ACCOUNT SETTINGS</div>
+                <button onClick={() => setScreen("home")} style={{ background: "none", border: "1px solid #1e2d4a", borderRadius: 8, color: "#4a6080", fontSize: 11, cursor: "pointer", padding: "6px 12px", fontFamily: "monospace" }}>← BACK</button>
+              </div>
+              <div style={{ fontSize: 10, color: "#4a6080", marginBottom: 16, letterSpacing: 1 }}>{userEmail}</div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+                {["EMAIL","PASSWORD","DELETE"].map(t => (
+                  <button key={t} onClick={() => { setSettingsTab(t.toLowerCase()); setSettingsMsg(null); setDeleteConfirm(false); }} style={{ flex: 1, padding: "8px 4px", background: settingsTab === t.toLowerCase() ? "#00d4ff22" : "none", border: settingsTab === t.toLowerCase() ? "1px solid #00d4ff66" : "1px solid #1e2d4a", borderRadius: 8, color: settingsTab === t.toLowerCase() ? "#00d4ff" : "#4a6080", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>{t}</button>
+                ))}
+              </div>
+              {settingsMsg && (
+                <div style={{ background: settingsMsg.type==="success" ? "#30D15811" : "#FF2D2D11", border: `1px solid ${settingsMsg.type==="success" ? "#30D15844" : "#FF2D2D44"}`, borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 12, color: settingsMsg.type==="success" ? "#30D158" : "#FF6060" }}>
+                  {settingsMsg.text}
+                </div>
+              )}
+              {settingsTab === "email" && (
+                <form onSubmit={handleChangeEmail} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>NEW EMAIL ADDRESS</div>
+                    <input className="input" type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="new@example.com" required style={{ width: "100%", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CURRENT PASSWORD</div>
+                    <input className="input" type="password" value={emailPw} onChange={e => setEmailPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                  </div>
+                  <button type="submit" style={{ ...S.btn, opacity: settingsLoading ? 0.6 : 1 }} disabled={settingsLoading}>{settingsLoading ? "UPDATING..." : "UPDATE EMAIL"}</button>
+                </form>
+              )}
+              {settingsTab === "password" && (
+                <form onSubmit={handleChangePassword} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CURRENT PASSWORD</div>
+                    <input className="input" type="password" value={curPw} onChange={e => setCurPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>NEW PASSWORD</div>
+                    <input className="input" type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 8 characters" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CONFIRM NEW PASSWORD</div>
+                    <input className="input" type="password" value={confirmNewPw} onChange={e => setConfirmNewPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                  </div>
+                  <button type="submit" style={{ ...S.btn, opacity: settingsLoading ? 0.6 : 1 }} disabled={settingsLoading}>{settingsLoading ? "UPDATING..." : "CHANGE PASSWORD"}</button>
+                </form>
+              )}
+              {settingsTab === "delete" && (
+                <div>
+                  <div style={{ background: "#FF2D2D08", border: "1px solid #FF2D2D22", borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>
+                    <div style={{ fontSize: 10, color: "#FF2D2D", letterSpacing: 1, marginBottom: 4, fontWeight: 700 }}>⚠ PERMANENT ACTION</div>
+                    <div style={{ fontSize: 11, color: "#7a5050", lineHeight: 1.6 }}>This will permanently delete your account and all data. Cannot be undone.</div>
+                  </div>
+                  {!deleteConfirm ? (
+                    <button onClick={() => setDeleteConfirm(true)} style={{ ...S.btn, background: "#FF2D2D22", border: "1px solid #FF2D2D66", color: "#FF6060" }}>DELETE MY ACCOUNT</button>
+                  ) : (
+                    <form onSubmit={handleDeleteAccount} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CONFIRM WITH PASSWORD</div>
+                        <input className="input" type="password" value={deletePw} onChange={e => setDeletePw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                      </div>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <button type="button" onClick={() => { setDeleteConfirm(false); setDeletePw(""); }} style={{ ...S.btnGhost, flex: 1 }}>CANCEL</button>
+                        <button type="submit" style={{ flex: 2, padding: 14, background: "#FF2D2D22", border: "1px solid #FF2D2D66", borderRadius: 12, color: "#FF6060", fontSize: 12, fontWeight: 700, cursor: settingsLoading ? "not-allowed" : "pointer", fontFamily: "monospace", letterSpacing: 1 }} disabled={settingsLoading}>{settingsLoading ? "DELETING..." : "CONFIRM DELETE"}</button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
