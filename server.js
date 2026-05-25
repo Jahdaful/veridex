@@ -2,13 +2,13 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import crypto from "crypto";
+import { promisify } from "util";
 import rateLimit from "express-rate-limit";
 import exifr from "exifr";
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
 
-// ── FIX L4: Fail hard on missing env vars ────────────────────────────────────
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("FATAL: ANTHROPIC_API_KEY not set in .env"); process.exit(1);
 }
@@ -19,7 +19,6 @@ if (!process.env.APP_PASSWORD) {
 const PORT = process.env.PORT || 3001;
 const app = express();
 
-// Allow localhost dev and Capacitor mobile origins
 const ALLOWED_ORIGINS = new Set([
   "http://localhost:5173", "http://localhost:5174",
   "capacitor://localhost", "https://localhost", "ionic://localhost",
@@ -31,9 +30,9 @@ app.use(cors({
   },
 }));
 
-// Session store with file persistence (survives server restarts)
+// ── Session store ─────────────────────────────────────────────────────────────
 const SESSIONS_FILE = path.join(process.cwd(), "sessions.json");
-const SESSION_TTL   = 8 * 60 * 60 * 1000; // 8 hours
+const SESSION_TTL   = 8 * 60 * 60 * 1000;
 
 function loadSessions() {
   try {
@@ -50,9 +49,9 @@ function saveSessions() {
 
 const sessions = loadSessions();
 
-function createSession() {
+function createSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { expires: Date.now() + SESSION_TTL });
+  sessions.set(token, { expires: Date.now() + SESSION_TTL, userId: userId || null });
   saveSessions();
   return token;
 }
@@ -64,7 +63,6 @@ function validateSession(token) {
   return true;
 }
 
-// Clean expired sessions every hour
 setInterval(() => {
   let pruned = false;
   for (const [token, s] of sessions) {
@@ -73,7 +71,34 @@ setInterval(() => {
   if (pruned) saveSessions();
 }, 3_600_000);
 
-// ── FIX H1 + H2: Auth middleware validates session token ─────────────────────
+// ── User store ────────────────────────────────────────────────────────────────
+const USERS_FILE = path.join(process.cwd(), "users.json");
+const scryptAsync = promisify(crypto.scrypt);
+
+function loadUsers() {
+  try { return JSON.parse(fs.readFileSync(USERS_FILE, "utf8")); }
+  catch { return {}; }
+}
+
+function saveUsers(users) {
+  try { fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2)); }
+  catch (e) { console.error("[users] save failed:", e.message); }
+}
+
+async function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = await scryptAsync(password, salt, 64);
+  return `${salt}:${hash.toString("hex")}`;
+}
+
+async function verifyPassword(password, stored) {
+  const [salt, hash] = stored.split(":");
+  const hashBuf = Buffer.from(hash, "hex");
+  const derived = await scryptAsync(password, salt, 64);
+  return crypto.timingSafeEqual(hashBuf, derived);
+}
+
+// ── Auth middleware ───────────────────────────────────────────────────────────
 function auth(req, res, next) {
   const token = req.headers["x-auth-token"] || "";
   if (!validateSession(token)) return res.status(401).json({ error: "Unauthorized" });
@@ -94,13 +119,12 @@ const scanLimiter = rateLimit({
   message: { error: "Rate limit exceeded. Wait before scanning again." },
 });
 
-// FIX C1: Rate limit on auth endpoint — 5 attempts per 15 min
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true,
-  message: { error: "Too many login attempts. Try again in 15 minutes." },
+  message: { error: "Too many attempts. Try again in 15 minutes." },
 });
 
-// ── FIX H3: Magic byte validator (client MIME ≠ file content) ────────────────
+// ── Magic byte validator ──────────────────────────────────────────────────────
 function validateMagicBytes(buffer, mimetype) {
   if (buffer.length < 12) return false;
   const hex = buffer.slice(0, 12).toString("hex").toUpperCase();
@@ -111,11 +135,10 @@ function validateMagicBytes(buffer, mimetype) {
     case "image/webp":
       return hex.startsWith("52494646") &&
         buffer.slice(8, 12).toString("ascii") === "WEBP";
-    default: return true; // video/audio — MIME check is sufficient
+    default: return true;
   }
 }
 
-// ── FIX L2: Concurrent upload limiter ────────────────────────────────────────
 let activeUploads = 0;
 const MAX_CONCURRENT = 3;
 
@@ -149,37 +172,77 @@ Return ONLY a valid JSON object. No prose, no markdown, no explanation:
   "integrityFlags": ["<flag 1>", "<flag 2>"]
 }`;
 
-// ── Auth endpoint ─────────────────────────────────────────────────────────────
-app.post("/api/auth", authLimiter, express.json(), (req, res) => {
-  const { password } = req.body;
-  if (!password) return res.status(400).json({ error: "Password required." });
+// ── Register endpoint ─────────────────────────────────────────────────────────
+app.post("/api/register", authLimiter, express.json(), async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: "Email and password required." });
 
-  // FIX M3: Constant-time comparison (prevents timing attacks)
-  const maxLen = Math.max(password.length, process.env.APP_PASSWORD.length, 1);
-  const provided = Buffer.concat([Buffer.from(String(password)), Buffer.alloc(maxLen)]).slice(0, maxLen);
-  const expected = Buffer.concat([Buffer.from(process.env.APP_PASSWORD), Buffer.alloc(maxLen)]).slice(0, maxLen);
-  const same = crypto.timingSafeEqual(provided, expected)
-    && password.length === process.env.APP_PASSWORD.length;
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(email)) return res.status(400).json({ error: "Invalid email address." });
+  if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
 
-  if (!same) return res.status(401).json({ error: "Invalid password." });
+  const users = loadUsers();
+  const key = email.toLowerCase().trim();
+  if (users[key]) return res.status(409).json({ error: "An account with this email already exists." });
 
-  const token = createSession();
-  res.json({ success: true, token });
+  try {
+    const passwordHash = await hashPassword(password);
+    users[key] = { passwordHash, createdAt: new Date().toISOString() };
+    saveUsers(users);
+    const token = createSession(key);
+    res.json({ success: true, token });
+  } catch {
+    res.status(500).json({ error: "Registration failed. Try again." });
+  }
 });
 
-// Logout endpoint
+// ── Auth endpoint — user login OR admin bypass ────────────────────────────────
+app.post("/api/auth", authLimiter, express.json(), async (req, res) => {
+  const { email, password } = req.body;
+  if (!password) return res.status(400).json({ error: "Password required." });
+
+  // Admin bypass: no email → check APP_PASSWORD
+  if (!email) {
+    const maxLen = Math.max(password.length, process.env.APP_PASSWORD.length, 1);
+    const provided = Buffer.concat([Buffer.from(String(password)), Buffer.alloc(maxLen)]).slice(0, maxLen);
+    const expected = Buffer.concat([Buffer.from(process.env.APP_PASSWORD), Buffer.alloc(maxLen)]).slice(0, maxLen);
+    const same = crypto.timingSafeEqual(provided, expected)
+      && password.length === process.env.APP_PASSWORD.length;
+    if (!same) return res.status(401).json({ error: "Invalid access code." });
+    const token = createSession("admin");
+    return res.json({ success: true, token, isAdmin: true });
+  }
+
+  // User login
+  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRe.test(email)) return res.status(400).json({ error: "Invalid email address." });
+
+  const users = loadUsers();
+  const key = email.toLowerCase().trim();
+  const user = users[key];
+  if (!user) return res.status(401).json({ error: "Invalid email or password." });
+
+  try {
+    const valid = await verifyPassword(password, user.passwordHash);
+    if (!valid) return res.status(401).json({ error: "Invalid email or password." });
+    const token = createSession(key);
+    res.json({ success: true, token });
+  } catch {
+    res.status(500).json({ error: "Authentication error. Try again." });
+  }
+});
+
+// ── Logout ────────────────────────────────────────────────────────────────────
 app.post("/api/logout", auth, (req, res) => {
   sessions.delete(req.headers["x-auth-token"]);
   saveSessions();
   res.json({ success: true });
 });
 
-// Health check for Railway/Render/deployment platforms
 app.get("/", (req, res) => res.json({ status: "ok", service: "VERIDEX API" }));
 
 // ── Main analysis endpoint ────────────────────────────────────────────────────
 app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, res) => {
-  // FIX L2: concurrent upload guard
   if (activeUploads >= MAX_CONCURRENT) {
     return res.status(429).json({ error: "Server busy. Try again in a moment." });
   }
@@ -189,7 +252,6 @@ app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, r
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file provided." });
 
-    // FIX H3: Validate actual file bytes match claimed MIME
     if (!validateMagicBytes(file.buffer, file.mimetype)) {
       return res.status(400).json({ error: "File content does not match declared type. Upload rejected." });
     }
@@ -198,16 +260,13 @@ app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, r
     const fileType = file.mimetype.startsWith("video") ? "video"
       : file.mimetype.startsWith("audio") ? "audio" : "image";
 
-    // FIX L3: SHA-256 only (removed MD5 — cryptographically broken)
     const sha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
 
-    // EXIF extraction
     let exifData = null;
     try {
       exifData = await exifr.parse(file.buffer, { tiff: true, exif: true, gps: true, iptc: true });
     } catch {}
 
-    // FIX M2: Strip GPS from EXIF block sent to Claude (keep analysis, drop coords)
     const exifBlock = exifData ? [
       `Camera: ${exifData.Make || "—"} ${exifData.Model || ""}`.trim(),
       `Software: ${exifData.Software || "none"}`,
@@ -258,23 +317,21 @@ ${exifBlock}`;
     if (start === -1 || end === -1) return res.status(422).json({ error: "Invalid model response." });
 
     const parsed = JSON.parse(clean.slice(start, end + 1));
-    parsed.fileHash   = { sha256 }; // FIX L3: SHA-256 only, no MD5
+    parsed.fileHash   = { sha256 };
     parsed.fileSize   = file.size;
     parsed.usedVision = useVision;
-    // FIX M2: exifRaw NOT sent to client (GPS/device data stays on server)
 
     res.json(parsed);
   } catch (err) {
-    console.error("[analyze]", err.message); // FIX M4: log internally
-    res.status(500).json({ error: "Analysis failed. Please try again." }); // generic to client
+    console.error("[analyze]", err.message);
+    res.status(500).json({ error: "Analysis failed. Please try again." });
   } finally {
-    activeUploads--; // FIX L2: always release slot
+    activeUploads--;
   }
 });
 
-// ── PDF export — FIX H1: now requires auth ───────────────────────────────────
+// ── PDF export ────────────────────────────────────────────────────────────────
 app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
-  // FIX M5: validate input before touching pdfkit
   const { result, fileName, scanDate } = req.body;
   if (!result || typeof result !== "object" || !fileName) {
     return res.status(400).json({ error: "Invalid export data." });
@@ -349,7 +406,6 @@ app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
     doc.fontSize(9).fillColor("#555").text(String(result.caseNotes || "N/A"));
     doc.moveDown(1.5);
 
-    // Forensic Disclaimer section
     line();
     doc.fontSize(10).fillColor("#CC6600").text("FORENSIC DISCLAIMER — READ BEFORE RELYING ON THIS REPORT");
     doc.moveDown(0.3);
@@ -373,7 +429,7 @@ app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
     doc.fontSize(7).fillColor("#aaa").text("This disclaimer is a mandatory component of all VERIDEX reports — FORENSIC_DISCLAIMER v1.0 — 2026-05-24", { align: "center" });
     doc.end();
   } catch (err) {
-    console.error("[export]", err.message); // FIX M4: log internally
+    console.error("[export]", err.message);
     if (!res.headersSent) res.status(500).json({ error: "Export failed. Try again." });
   }
 });

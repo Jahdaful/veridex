@@ -62,19 +62,32 @@ async function apiAnalyze(file, fileType, token) {
   return data;
 }
 
-async function apiAuth(password) {
+// email+password login; omit email for admin bypass
+async function apiAuth(email, password) {
+  const body = email ? { email, password } : { password };
   const res = await fetch(`${API_BASE}/api/auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Authentication failed");
   return data;
 }
 
+async function apiRegister(email, password) {
+  const res = await fetch(`${API_BASE}/api/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Registration failed");
+  return data;
+}
+
 async function apiLogout(token) {
-  try { await fetch(`${API_BASE}/api/logout`, { method: "POST", headers: { "x-auth-token": token } }); } catch {}
+  try { await fetch(`${API_BASE}/api/logout`, { method: "POST", headers: { "x-auth-token": token } }); } catch { /* best-effort */ }
 }
 
 async function apiExport(payload, token) {
@@ -99,19 +112,22 @@ function saveCase(result, fileName) {
 export default function ForensicsApp() {
   const savedAuth    = localStorage.getItem("veridex_auth");
   const savedTerms   = localStorage.getItem("veridex_terms");
-  const [screen,       setScreen]       = useState(savedAuth ? "home" : "login");
-  const [authToken,    setAuthToken]    = useState(savedAuth || "");
-  const [file,         setFile]         = useState(null);
-  const [fileType,     setFileType]     = useState(null);
-  const [result,       setResult]       = useState(null);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [scanStep,     setScanStep]     = useState("");
-  const [error,        setError]        = useState(null);
-  const [password,     setPassword]     = useState("");
-  const [authLoading,  setAuthLoading]  = useState(false);
-  const [cases,        setCases]        = useState(loadCases);
-  const [exporting,    setExporting]    = useState(false);
-  const [scanDate,     setScanDate]     = useState("");
+  const [screen,        setScreen]        = useState(savedAuth ? "home" : "login");
+  const [authToken,     setAuthToken]     = useState(savedAuth || "");
+  const [file,          setFile]          = useState(null);
+  const [fileType,      setFileType]      = useState(null);
+  const [result,        setResult]        = useState(null);
+  const [scanProgress,  setScanProgress]  = useState(0);
+  const [scanStep,      setScanStep]      = useState("");
+  const [error,         setError]         = useState(null);
+  const [email,         setEmail]         = useState("");
+  const [password,      setPassword]      = useState("");
+  const [confirmPw,     setConfirmPw]     = useState("");
+  const [authMode,      setAuthMode]      = useState("login"); // "login" | "signup" | "code"
+  const [authLoading,   setAuthLoading]   = useState(false);
+  const [cases,         setCases]         = useState(loadCases);
+  const [exporting,     setExporting]     = useState(false);
+  const [scanDate,      setScanDate]      = useState("");
   const [termsAccepted, setTermsAccepted] = useState(!!savedTerms);
   const [termsChecked,  setTermsChecked]  = useState(false);
   const [legalTab,      setLegalTab]      = useState(0);
@@ -129,17 +145,48 @@ export default function ForensicsApp() {
     "Generating authenticity report...",
   ];
 
+  function switchAuthMode(mode) {
+    setAuthMode(mode);
+    setError(null);
+    setEmail("");
+    setPassword("");
+    setConfirmPw("");
+  }
+
+  function afterAuthSuccess(token) {
+    localStorage.setItem("veridex_auth", token);
+    setAuthToken(token);
+    const accepted = !!localStorage.getItem("veridex_terms");
+    setTermsAccepted(accepted);
+    setScreen(accepted ? "home" : "terms");
+  }
+
   async function handleLogin(e) {
     e.preventDefault();
     setAuthLoading(true);
     setError(null);
     try {
-      const data = await apiAuth(password);
-      localStorage.setItem("veridex_auth", data.token);
-      setAuthToken(data.token);
-      const accepted = !!localStorage.getItem("veridex_terms");
-      setTermsAccepted(accepted);
-      setScreen(accepted ? "home" : "terms");
+      // "code" mode = admin bypass (no email)
+      const data = authMode === "code"
+        ? await apiAuth(null, password)
+        : await apiAuth(email, password);
+      afterAuthSuccess(data.token);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleSignup(e) {
+    e.preventDefault();
+    if (password !== confirmPw) { setError("Passwords do not match."); return; }
+    if (password.length < 8) { setError("Password must be at least 8 characters."); return; }
+    setAuthLoading(true);
+    setError(null);
+    try {
+      const data = await apiRegister(email, password);
+      afterAuthSuccess(data.token);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -251,8 +298,9 @@ export default function ForensicsApp() {
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes glow{0%,100%{box-shadow:0 0 20px #00d4ff44}50%{box-shadow:0 0 40px #00d4ff88}}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#0b0f1a}::-webkit-scrollbar-thumb{background:#1e2d4a;border-radius:2px}
-        input[type=password]{width:100%;box-sizing:border-box;background:#0d1220;border:1px solid #1e2d4a;border-radius:10px;padding:14px 16px;color:#e8eaf6;font-family:monospace;font-size:14px;letter-spacing:3px;outline:none}
-        input[type=password]:focus{border-color:#00d4ff66}
+        input[type=password],input[type=email]{width:100%;box-sizing:border-box;background:#0d1220;border:1px solid #1e2d4a;border-radius:10px;padding:14px 16px;color:#e8eaf6;font-family:monospace;font-size:14px;outline:none}
+        input[type=password]{letter-spacing:3px}
+        input[type=password]:focus,input[type=email]:focus{border-color:#00d4ff66}
         .terms-scroll{max-height:380px;overflow-y:auto;background:#060a12;border:1px solid #1e2d4a;border-radius:10px;padding:16px;margin-bottom:16px;font-size:11px;color:#6a8090;line-height:1.8}
         .terms-scroll h3{color:#00d4ff;font-size:11px;letter-spacing:2px;margin:14px 0 6px}
         .terms-scroll h3:first-child{margin-top:0}
@@ -289,24 +337,95 @@ export default function ForensicsApp() {
 
         <div style={S.content}>
 
-          {/* LOGIN */}
+          {/* LOGIN / SIGNUP */}
           {screen === "login" && (
             <div style={{ animation: "fadeIn .4s ease" }}>
-              <div style={{ marginBottom: 40, textAlign: "center" }}>
-                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3, marginBottom: 12 }}>FORENSIC AI DETECTION SUITE</div>
-                <div style={{ fontSize: 24, color: "#e8eaf6", fontWeight: 700, marginBottom: 8 }}>VERIDEX</div>
+              <div style={{ marginBottom: 28, textAlign: "center" }}>
+                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3, marginBottom: 10 }}>FORENSIC AI DETECTION SUITE</div>
+                <div style={{ fontSize: 24, color: "#e8eaf6", fontWeight: 700, marginBottom: 6 }}>VERIDEX</div>
                 <div style={{ fontSize: 11, color: "#4a6080" }}>Authorized access only</div>
               </div>
-              {error && <div style={{ background: "#FF2D2D11", border: "1px solid #FF2D2D44", borderRadius: 10, padding: 12, marginBottom: 20, fontSize: 12, color: "#FF2D2D" }}>{error}</div>}
-              <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <div>
-                  <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 8 }}>ACCESS CODE</div>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••••" autoFocus />
+
+              {/* Mode tabs */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 24 }}>
+                {[["login","LOGIN"],["signup","CREATE ACCOUNT"]].map(([m, label]) => (
+                  <button key={m} onClick={() => switchAuthMode(m)} style={{
+                    flex: 1, padding: "10px 0", background: authMode === m ? "#00d4ff11" : "#0d1220",
+                    border: `1px solid ${authMode === m ? "#00d4ff44" : "#1e2d4a"}`,
+                    borderRadius: 10, color: authMode === m ? "#00d4ff" : "#4a6080",
+                    fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1.5,
+                  }}>{label}</button>
+                ))}
+              </div>
+
+              {error && <div style={{ background: "#FF2D2D11", border: "1px solid #FF2D2D44", borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 12, color: "#FF2D2D" }}>{error}</div>}
+
+              {/* LOGIN form */}
+              {authMode === "login" && (
+                <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 8 }}>EMAIL</div>
+                    <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      placeholder="officer@agency.gov" autoFocus required
+                      style={{ width: "100%", boxSizing: "border-box", background: "#0d1220", border: "1px solid #1e2d4a", borderRadius: 10, padding: "14px 16px", color: "#e8eaf6", fontFamily: "monospace", fontSize: 13, outline: "none" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 8 }}>PASSWORD</div>
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••••" required />
+                  </div>
+                  <button type="submit" style={{ ...S.btn, animation: "glow 3s infinite", opacity: authLoading ? 0.6 : 1 }} disabled={authLoading}>
+                    {authLoading ? "AUTHENTICATING..." : "⊕ LOGIN"}
+                  </button>
+                </form>
+              )}
+
+              {/* SIGNUP form */}
+              {authMode === "signup" && (
+                <form onSubmit={handleSignup} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 8 }}>EMAIL</div>
+                    <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                      placeholder="officer@agency.gov" autoFocus required
+                      style={{ width: "100%", boxSizing: "border-box", background: "#0d1220", border: "1px solid #1e2d4a", borderRadius: 10, padding: "14px 16px", color: "#e8eaf6", fontFamily: "monospace", fontSize: 13, outline: "none" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 8 }}>PASSWORD <span style={{ color: "#2a3a55" }}>(min 8 chars)</span></div>
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••••" required />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 8 }}>CONFIRM PASSWORD</div>
+                    <input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} placeholder="••••••••••" required />
+                  </div>
+                  <button type="submit" style={{ ...S.btn, animation: "glow 3s infinite", opacity: authLoading ? 0.6 : 1 }} disabled={authLoading}>
+                    {authLoading ? "CREATING ACCOUNT..." : "⊕ CREATE ACCOUNT"}
+                  </button>
+                </form>
+              )}
+
+              {/* ADMIN BYPASS (hidden code mode) */}
+              {authMode === "code" && (
+                <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 8 }}>MASTER ACCESS CODE</div>
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••••" autoFocus />
+                  </div>
+                  <button type="submit" style={{ ...S.btn, opacity: authLoading ? 0.6 : 1 }} disabled={authLoading}>
+                    {authLoading ? "AUTHENTICATING..." : "⊕ AUTHENTICATE"}
+                  </button>
+                  <button type="button" onClick={() => switchAuthMode("login")} style={{ background: "none", border: "none", color: "#2a3a55", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, textAlign: "center" }}>
+                    ← BACK TO LOGIN
+                  </button>
+                </form>
+              )}
+
+              {/* Admin code link — only shown on login/signup modes */}
+              {authMode !== "code" && (
+                <div style={{ textAlign: "center", marginTop: 20 }}>
+                  <button onClick={() => switchAuthMode("code")} style={{ background: "none", border: "none", color: "#1e2d4a", fontSize: 9, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1 }}>
+                    USE ADMIN ACCESS CODE
+                  </button>
                 </div>
-                <button type="submit" style={{ ...S.btn, animation: "glow 3s infinite", opacity: authLoading ? 0.6 : 1 }} disabled={authLoading}>
-                  {authLoading ? "AUTHENTICATING..." : "⊕ AUTHENTICATE"}
-                </button>
-              </form>
+              )}
             </div>
           )}
 
