@@ -226,6 +226,13 @@ export default function ForensicsApp() {
   const [deleteConfirm,  setDeleteConfirm]  = useState(false);
   const [settingsMsg,    setSettingsMsg]    = useState(null);
   const [settingsLoading,setSettingsLoading]= useState(false);
+  const [showPws,        setShowPws]        = useState({});
+  const togglePw = key => setShowPws(s => ({ ...s, [key]: !s[key] }));
+  const eyeBtn = key => (
+    <button type="button" onClick={() => togglePw(key)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: showPws[key] ? "#00d4ff" : "#4a6080", fontSize: 13, padding: 0, lineHeight: 1 }}>
+      {showPws[key] ? "◉" : "◎"}
+    </button>
+  );
   const fileRef = useRef();
 
   const SCAN_STEPS = [
@@ -501,11 +508,14 @@ export default function ForensicsApp() {
                   </div>
                   <div>
                     <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>PASSWORD</div>
-                    <input
-                      type="password" value={password} onChange={e => setPassword(e.target.value)}
-                      placeholder="••••••••••" required
-                      style={{ ...inputStyle, letterSpacing: "3px" }}
-                    />
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type={showPws.login ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+                        placeholder="••••••••••" required
+                        style={{ ...inputStyle, letterSpacing: showPws.login ? "normal" : "3px", paddingRight: 36 }}
+                      />
+                      {eyeBtn("login")}
+                    </div>
                   </div>
                   <button
                     type="submit"
@@ -535,19 +545,25 @@ export default function ForensicsApp() {
                     <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>
                       PASSWORD <span style={{ color: "#2a3a55" }}>— min 8 characters</span>
                     </div>
-                    <input
-                      type="password" value={password} onChange={e => setPassword(e.target.value)}
-                      placeholder="••••••••••" required
-                      style={{ ...inputStyle, letterSpacing: "3px" }}
-                    />
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type={showPws.signup ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+                        placeholder="••••••••••" required
+                        style={{ ...inputStyle, letterSpacing: showPws.signup ? "normal" : "3px", paddingRight: 36 }}
+                      />
+                      {eyeBtn("signup")}
+                    </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>CONFIRM PASSWORD</div>
-                    <input
-                      type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-                      placeholder="••••••••••" required
-                      style={{ ...inputStyle, letterSpacing: "3px" }}
-                    />
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type={showPws.signupConfirm ? "text" : "password"} value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+                        placeholder="••••••••••" required
+                        style={{ ...inputStyle, letterSpacing: showPws.signupConfirm ? "normal" : "3px", paddingRight: 36 }}
+                      />
+                      {eyeBtn("signupConfirm")}
+                    </div>
                   </div>
 
                   {/* T&C checkbox */}
@@ -817,7 +833,10 @@ export default function ForensicsApp() {
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CURRENT PASSWORD</div>
-                    <input className="input" type="password" value={emailPw} onChange={e => setEmailPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                    <div style={{ position: "relative" }}>
+                      <input className="input" type={showPws.emailPw ? "text" : "password"} value={emailPw} onChange={e => setEmailPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: showPws.emailPw ? "normal" : "3px", paddingRight: 36 }} />
+                      {eyeBtn("emailPw")}
+                    </div>
                   </div>
                   <button type="submit" style={{ ...S.btn, opacity: settingsLoading ? 0.6 : 1 }} disabled={settingsLoading}>{settingsLoading ? "UPDATING..." : "UPDATE EMAIL"}</button>
                 </form>
@@ -826,15 +845,24 @@ export default function ForensicsApp() {
                 <form onSubmit={handleChangePassword} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CURRENT PASSWORD</div>
-                    <input className="input" type="password" value={curPw} onChange={e => setCurPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                    <div style={{ position: "relative" }}>
+                      <input className="input" type={showPws.curPw ? "text" : "password"} value={curPw} onChange={e => setCurPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: showPws.curPw ? "normal" : "3px", paddingRight: 36 }} />
+                      {eyeBtn("curPw")}
+                    </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>NEW PASSWORD</div>
-                    <input className="input" type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 8 characters" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                    <div style={{ position: "relative" }}>
+                      <input className="input" type={showPws.newPw ? "text" : "password"} value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 8 characters" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: showPws.newPw ? "normal" : "3px", paddingRight: 36 }} />
+                      {eyeBtn("newPw")}
+                    </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CONFIRM NEW PASSWORD</div>
-                    <input className="input" type="password" value={confirmNewPw} onChange={e => setConfirmNewPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                    <div style={{ position: "relative" }}>
+                      <input className="input" type={showPws.confirmNewPw ? "text" : "password"} value={confirmNewPw} onChange={e => setConfirmNewPw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: showPws.confirmNewPw ? "normal" : "3px", paddingRight: 36 }} />
+                      {eyeBtn("confirmNewPw")}
+                    </div>
                   </div>
                   <button type="submit" style={{ ...S.btn, opacity: settingsLoading ? 0.6 : 1 }} disabled={settingsLoading}>{settingsLoading ? "UPDATING..." : "CHANGE PASSWORD"}</button>
                 </form>
@@ -851,7 +879,10 @@ export default function ForensicsApp() {
                     <form onSubmit={handleDeleteAccount} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                       <div>
                         <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 2, marginBottom: 6 }}>CONFIRM WITH PASSWORD</div>
-                        <input className="input" type="password" value={deletePw} onChange={e => setDeletePw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: "3px" }} />
+                        <div style={{ position: "relative" }}>
+                          <input className="input" type={showPws.deletePw ? "text" : "password"} value={deletePw} onChange={e => setDeletePw(e.target.value)} placeholder="••••••••" required style={{ width: "100%", boxSizing: "border-box", letterSpacing: showPws.deletePw ? "normal" : "3px", paddingRight: 36 }} />
+                          {eyeBtn("deletePw")}
+                        </div>
                       </div>
                       <div style={{ display: "flex", gap: 10 }}>
                         <button type="button" onClick={() => { setDeleteConfirm(false); setDeletePw(""); }} style={{ ...S.btnGhost, flex: 1 }}>CANCEL</button>
