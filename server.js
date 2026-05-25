@@ -8,6 +8,8 @@ import exifr from "exifr";
 import PDFDocument from "pdfkit";
 import fs from "fs";
 import path from "path";
+import pg from "pg";
+const { Pool } = pg;
 
 // ── Environment ───────────────────────────────────────────────────────────────
 if (!process.env.ANTHROPIC_API_KEY) {
@@ -58,22 +60,47 @@ app.use(cors({
   },
 }));
 
-// ── Data directory (Railway Volume at /data, local falls back to cwd) ─────────
-const DATA_DIR = process.env.DATA_DIR || process.cwd();
-try { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+// ── Database (Postgres via Neon or any DATABASE_URL) ─────────────────────────
+const pool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  : null;
 
-// ── User store (users.json) ───────────────────────────────────────────────────
-const USERS_FILE  = path.join(DATA_DIR, "users.json");
+async function initDb() {
+  if (!pool) { console.warn("[db] No DATABASE_URL — using in-memory storage (not persistent)"); return; }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS kv_store (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  console.log("[db] Postgres connected and tables ready.");
+}
+
+async function dbGet(key, fallback) {
+  if (!pool) return fallback;
+  try {
+    const { rows } = await pool.query("SELECT value FROM kv_store WHERE key=$1", [key]);
+    return rows.length ? rows[0].value : fallback;
+  } catch (e) { console.error("[db] get error:", e.message); return fallback; }
+}
+
+async function dbSet(key, value) {
+  if (!pool) return;
+  try {
+    await pool.query(
+      "INSERT INTO kv_store(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=$2, updated_at=NOW()",
+      [key, JSON.stringify(value)]
+    );
+  } catch (e) { console.error("[db] set error:", e.message); }
+}
+
+// ── User store ────────────────────────────────────────────────────────────────
 const scryptAsync = promisify(crypto.scrypt);
 
-function loadUsers() {
-  try { return JSON.parse(fs.readFileSync(USERS_FILE, "utf8")); }
-  catch { return {}; }
-}
-function saveUsers(users) {
-  try { fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2)); }
-  catch (e) { console.error("[users] save failed:", e.message); }
-}
+async function loadUsers() { return dbGet("users", {}); }
+async function saveUsers(users) { return dbSet("users", users); }
+
 async function hashPassword(pw) {
   const salt = crypto.randomBytes(16).toString("hex");
   const hash = await scryptAsync(pw, salt, 64);
@@ -86,25 +113,10 @@ async function verifyPassword(pw, stored) {
   return crypto.timingSafeEqual(hashBuf, derived);
 }
 
-// ── JWT helpers ───────────────────────────────────────────────────────────────
-const REVOKED_FILE = path.join(DATA_DIR, "revoked.json");
-function loadRevoked() {
-  try { return new Set(JSON.parse(fs.readFileSync(REVOKED_FILE, "utf8"))); }
-  catch { return new Set(); }
-}
-function saveRevoked(set) {
-  try { fs.writeFileSync(REVOKED_FILE, JSON.stringify([...set])); }
-  catch (e) { console.error("[revoked] save failed:", e.message); }
-}
-const revokedTokens = loadRevoked();
-
-// Prune expired revoked tokens hourly
+// ── Revoked tokens (in-memory; tokens expire in 8h so restart is acceptable) ─
+const revokedTokens = new Set();
 setInterval(() => {
-  let changed = false;
-  for (const t of revokedTokens) {
-    if (!verifyJwt(t)) { revokedTokens.delete(t); changed = true; }
-  }
-  if (changed) saveRevoked(revokedTokens);
+  for (const t of revokedTokens) { if (!verifyJwt(t)) revokedTokens.delete(t); }
 }, 3_600_000);
 
 function issueToken(email) {
@@ -123,17 +135,9 @@ function auth(req, res, next) {
   next();
 }
 
-// ── Case store (cases.json) ───────────────────────────────────────────────────
-const CASES_FILE = path.join(DATA_DIR, "cases.json");
-
-function loadCases() {
-  try { return JSON.parse(fs.readFileSync(CASES_FILE, "utf8")); }
-  catch { return { sequence: {}, cases: {} }; }
-}
-function saveCases(store) {
-  try { fs.writeFileSync(CASES_FILE, JSON.stringify(store)); }
-  catch (e) { console.error("[cases] save failed:", e.message); }
-}
+// ── Case store ────────────────────────────────────────────────────────────────
+async function loadCases() { return dbGet("cases", { sequence: {}, cases: {} }); }
+async function saveCases(store) { return dbSet("cases", store); }
 function nextCaseId(store) {
   const year = new Date().getFullYear().toString();
   store.sequence[year] = (store.sequence[year] || 0) + 1;
@@ -345,17 +349,13 @@ app.post("/api/register", authLimiter, express.json(), async (req, res) => {
   if (!emailRe.test(email))  return res.status(400).json({ error: "Invalid email address." });
   if (password.length < 8)   return res.status(400).json({ error: "Password must be at least 8 characters." });
 
-  const users = loadUsers();
+  const users = await loadUsers();
   const key   = email.toLowerCase().trim();
   if (users[key]) return res.status(409).json({ error: "An account with this email already exists." });
 
   try {
-    users[key] = {
-      passwordHash: await hashPassword(password),
-      createdAt: new Date().toISOString(),
-      onboarded: false,
-    };
-    saveUsers(users);
+    users[key] = { passwordHash: await hashPassword(password), createdAt: new Date().toISOString(), onboarded: false };
+    await saveUsers(users);
     res.json({ success: true, token: issueToken(key), isNewUser: true });
   } catch {
     res.status(500).json({ error: "Registration failed. Try again." });
@@ -369,7 +369,7 @@ app.post("/api/auth", authLimiter, express.json(), async (req, res) => {
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRe.test(email)) return res.status(400).json({ error: "Invalid email address." });
 
-  const users = loadUsers();
+  const users = await loadUsers();
   const key   = email.toLowerCase().trim();
   const user  = users[key];
   if (!user) return res.status(401).json({ error: "Invalid email or password." });
@@ -385,30 +385,28 @@ app.post("/api/auth", authLimiter, express.json(), async (req, res) => {
 
 app.post("/api/logout", auth, (req, res) => {
   revokedTokens.add(req.token);
-  saveRevoked(revokedTokens);
   res.json({ success: true });
 });
 
 app.post("/api/refresh", auth, (req, res) => {
   revokedTokens.add(req.token);
-  saveRevoked(revokedTokens);
   res.json({ success: true, token: issueToken(req.userId) });
 });
 
 // ── User profile ──────────────────────────────────────────────────────────────
 
-app.get("/api/me", auth, (req, res) => {
-  const users = loadUsers();
+app.get("/api/me", auth, async (req, res) => {
+  const users = await loadUsers();
   const user  = users[req.userId];
   if (!user) return res.status(404).json({ error: "User not found." });
   res.json({ email: req.userId, createdAt: user.createdAt, onboarded: user.onboarded });
 });
 
-app.post("/api/me/onboarded", auth, (req, res) => {
-  const users = loadUsers();
+app.post("/api/me/onboarded", auth, async (req, res) => {
+  const users = await loadUsers();
   if (!users[req.userId]) return res.status(404).json({ error: "User not found." });
   users[req.userId].onboarded = true;
-  saveUsers(users);
+  await saveUsers(users);
   res.json({ success: true });
 });
 
@@ -419,7 +417,7 @@ app.put("/api/me/email", authLimiter, auth, express.json(), async (req, res) => 
   const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRe.test(newEmail)) return res.status(400).json({ error: "Invalid email address." });
 
-  const users = loadUsers();
+  const users = await loadUsers();
   const user  = users[req.userId];
   if (!user) return res.status(404).json({ error: "User not found." });
 
@@ -434,15 +432,14 @@ app.put("/api/me/email", authLimiter, auth, express.json(), async (req, res) => 
     if (newKey !== req.userId) {
       users[newKey] = { ...user };
       delete users[req.userId];
-      const store = loadCases();
+      const store = await loadCases();
       for (const c of Object.values(store.cases)) {
         if (c.userId === req.userId) c.userId = newKey;
       }
-      saveCases(store);
+      await saveCases(store);
     }
-    saveUsers(users);
+    await saveUsers(users);
     revokedTokens.add(req.token);
-    saveRevoked(revokedTokens);
     res.json({ success: true, token: issueToken(newKey) });
   } catch {
     res.status(500).json({ error: "Email update failed." });
@@ -456,7 +453,7 @@ app.put("/api/me/password", authLimiter, auth, express.json(), async (req, res) 
   if (newPassword.length < 8)
     return res.status(400).json({ error: "Password must be at least 8 characters." });
 
-  const users = loadUsers();
+  const users = await loadUsers();
   const user  = users[req.userId];
   if (!user) return res.status(404).json({ error: "User not found." });
 
@@ -464,7 +461,7 @@ app.put("/api/me/password", authLimiter, auth, express.json(), async (req, res) 
     if (!await verifyPassword(currentPassword, user.passwordHash))
       return res.status(401).json({ error: "Incorrect current password." });
     users[req.userId].passwordHash = await hashPassword(newPassword);
-    saveUsers(users);
+    await saveUsers(users);
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "Password update failed." });
@@ -475,7 +472,7 @@ app.delete("/api/me", auth, express.json(), async (req, res) => {
   const { password } = req.body || {};
   if (!password) return res.status(400).json({ error: "Password required to delete account." });
 
-  const users = loadUsers();
+  const users = await loadUsers();
   const user  = users[req.userId];
   if (!user) return res.status(404).json({ error: "User not found." });
 
@@ -483,14 +480,13 @@ app.delete("/api/me", auth, express.json(), async (req, res) => {
     if (!await verifyPassword(password, user.passwordHash))
       return res.status(401).json({ error: "Incorrect password." });
     delete users[req.userId];
-    saveUsers(users);
-    const store = loadCases();
+    await saveUsers(users);
+    const store = await loadCases();
     for (const id of Object.keys(store.cases)) {
       if (store.cases[id].userId === req.userId) delete store.cases[id];
     }
-    saveCases(store);
+    await saveCases(store);
     revokedTokens.add(req.token);
-    saveRevoked(revokedTokens);
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "Account deletion failed." });
@@ -499,19 +495,19 @@ app.delete("/api/me", auth, express.json(), async (req, res) => {
 
 // ── Cases ─────────────────────────────────────────────────────────────────────
 
-app.get("/api/cases", auth, (req, res) => {
-  const store = loadCases();
+app.get("/api/cases", auth, async (req, res) => {
+  const store = await loadCases();
   const list  = Object.values(store.cases)
     .filter(c => c.userId === req.userId)
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json({ cases: list });
 });
 
-app.post("/api/cases", auth, express.json({ limit: "5mb" }), (req, res) => {
+app.post("/api/cases", auth, express.json({ limit: "5mb" }), async (req, res) => {
   const { analysis, fileName, fileType, fileSize, mimeType } = req.body || {};
   if (!analysis || !fileName) return res.status(400).json({ error: "Invalid case data." });
 
-  const store = loadCases();
+  const store = await loadCases();
   const id    = nextCaseId(store);
   const now   = new Date().toISOString();
 
@@ -539,19 +535,19 @@ app.post("/api/cases", auth, express.json({ limit: "5mb" }), (req, res) => {
     analystNotes:    "",
     status:          "Open",
   };
-  saveCases(store);
+  await saveCases(store);
   res.status(201).json({ case: store.cases[id] });
 });
 
-app.get("/api/cases/:id", auth, (req, res) => {
-  const store = loadCases();
+app.get("/api/cases/:id", auth, async (req, res) => {
+  const store = await loadCases();
   const c     = store.cases[req.params.id];
   if (!c || c.userId !== req.userId) return res.status(404).json({ error: "Case not found." });
   res.json({ case: c });
 });
 
-app.put("/api/cases/:id", auth, express.json(), (req, res) => {
-  const store = loadCases();
+app.put("/api/cases/:id", auth, express.json(), async (req, res) => {
+  const store = await loadCases();
   const c     = store.cases[req.params.id];
   if (!c || c.userId !== req.userId) return res.status(404).json({ error: "Case not found." });
 
@@ -563,23 +559,23 @@ app.put("/api/cases/:id", auth, express.json(), (req, res) => {
   if (analystNotes !== undefined) c.analystNotes = String(analystNotes).slice(0, 5000);
   if (status       !== undefined) c.status = status;
   c.updatedAt = new Date().toISOString();
-  saveCases(store);
+  await saveCases(store);
   res.json({ case: c });
 });
 
-app.delete("/api/cases/:id", auth, (req, res) => {
-  const store = loadCases();
+app.delete("/api/cases/:id", auth, async (req, res) => {
+  const store = await loadCases();
   const c     = store.cases[req.params.id];
   if (!c || c.userId !== req.userId) return res.status(404).json({ error: "Case not found." });
   delete store.cases[req.params.id];
-  saveCases(store);
+  await saveCases(store);
   res.json({ success: true });
 });
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
-app.get("/api/stats", auth, (req, res) => {
-  const store     = loadCases();
+app.get("/api/stats", auth, async (req, res) => {
+  const store     = await loadCases();
   const all       = Object.values(store.cases).filter(c => c.userId === req.userId);
   const sorted    = [...all].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   res.json({
@@ -683,8 +679,8 @@ app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, r
 
 // ── PDF Export ────────────────────────────────────────────────────────────────
 
-app.post("/api/export/:caseId", auth, (req, res) => {
-  const store = loadCases();
+app.post("/api/export/:caseId", auth, async (req, res) => {
+  const store = await loadCases();
   const c     = store.cases[req.params.caseId];
   if (!c || c.userId !== req.userId) return res.status(404).json({ error: "Case not found." });
   generatePDF(c, res);
@@ -698,4 +694,9 @@ app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
   generatePDF({ ...result, fileName, createdAt: scanDate, id: null }, res);
 });
 
-app.listen(PORT, () => console.log(`API server running on http://localhost:${PORT}`));
+initDb().then(() => {
+  app.listen(PORT, () => console.log(`API server running on http://localhost:${PORT}`));
+}).catch(err => {
+  console.error("Failed to initialize DB:", err.message);
+  process.exit(1);
+});
