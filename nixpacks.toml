@@ -1,5 +1,12 @@
 [variables]
 NODE_VERSION = "20"
+NIXPACKS_NO_CADDY = "1"
+
+[phases.install]
+cmds = ["npm install --omit=dev"]
 
 [phases.build]
-cmds = ["npm install --omit=dev"]
+cmds = []
+
+[start]
+cmd = "node server.js"
