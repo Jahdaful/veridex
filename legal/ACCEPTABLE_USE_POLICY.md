@@ -2,7 +2,7 @@
 
 **Effective Date:** 2026-05-24
 **Version:** 1.0
-**Classification:** Law Enforcement Use Only
+**Classification:** Societal Enforcement Use Only
 
 ---
 
@@ -18,7 +18,7 @@ Access is restricted to:
 
 | User Type | Conditions |
 |---|---|
-| Law Enforcement Officers | Active duty, with case-related authorization |
+| Societal Enforcement Officers | Active duty, with case-related authorization |
 | Licensed Forensic Investigators | Valid professional license, engaged on authorized matter |
 | Certified Digital Forensics Professionals | Relevant certification (EnCE, GCFE, GCFA, CCE, or equivalent) |
 | Agency IT/Security Staff | System administration purposes only |
@@ -101,4 +101,4 @@ Use of this System constitutes acknowledgement that you have read, understood, a
 
 ---
 
-*VERIDEX Forensic AI — Restricted Access — Law Enforcement Use Only*
+*VERIDEX Forensic AI — Restricted Access — Societal Enforcement Use Only*

@@ -5,21 +5,14 @@ import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import exifr from "exifr";
 import PDFDocument from "pdfkit";
-import fs from "fs";
-import path from "path";
 
-// ── FIX L4: Fail hard on missing env vars ────────────────────────────────────
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("FATAL: ANTHROPIC_API_KEY not set in .env"); process.exit(1);
-}
-if (!process.env.APP_PASSWORD) {
-  console.error("FATAL: APP_PASSWORD not set in .env"); process.exit(1);
 }
 
 const PORT = process.env.PORT || 3001;
 const app = express();
 
-// Allow localhost dev and Capacitor mobile origins
 const ALLOWED_ORIGINS = new Set([
   "http://localhost:5173", "http://localhost:5174",
   "capacitor://localhost", "https://localhost", "ionic://localhost",
@@ -31,55 +24,6 @@ app.use(cors({
   },
 }));
 
-// Session store with file persistence (survives server restarts)
-const SESSIONS_FILE = path.join(process.cwd(), "sessions.json");
-const SESSION_TTL   = 8 * 60 * 60 * 1000; // 8 hours
-
-function loadSessions() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
-    const now = Date.now();
-    return new Map(Object.entries(raw).filter(([, s]) => s.expires > now));
-  } catch { return new Map(); }
-}
-
-function saveSessions() {
-  try { fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Object.fromEntries(sessions))); }
-  catch (e) { console.error("[sessions] save failed:", e.message); }
-}
-
-const sessions = loadSessions();
-
-function createSession() {
-  const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { expires: Date.now() + SESSION_TTL });
-  saveSessions();
-  return token;
-}
-
-function validateSession(token) {
-  if (!token || !sessions.has(token)) return false;
-  const s = sessions.get(token);
-  if (Date.now() > s.expires) { sessions.delete(token); saveSessions(); return false; }
-  return true;
-}
-
-// Clean expired sessions every hour
-setInterval(() => {
-  let pruned = false;
-  for (const [token, s] of sessions) {
-    if (Date.now() > s.expires) { sessions.delete(token); pruned = true; }
-  }
-  if (pruned) saveSessions();
-}, 3_600_000);
-
-// ── FIX H1 + H2: Auth middleware validates session token ─────────────────────
-function auth(req, res, next) {
-  const token = req.headers["x-auth-token"] || "";
-  if (!validateSession(token)) return res.status(401).json({ error: "Unauthorized" });
-  next();
-}
-
 // ── File upload ───────────────────────────────────────────────────────────────
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -88,19 +32,13 @@ const upload = multer({
     cb(null, /^(image|video|audio)\//.test(file.mimetype)),
 });
 
-// ── Rate limiters ─────────────────────────────────────────────────────────────
+// ── Rate limiter ──────────────────────────────────────────────────────────────
 const scanLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true,
   message: { error: "Rate limit exceeded. Wait before scanning again." },
 });
 
-// FIX C1: Rate limit on auth endpoint — 5 attempts per 15 min
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, max: 5, standardHeaders: true,
-  message: { error: "Too many login attempts. Try again in 15 minutes." },
-});
-
-// ── FIX H3: Magic byte validator (client MIME ≠ file content) ────────────────
+// ── Magic byte validator ──────────────────────────────────────────────────────
 function validateMagicBytes(buffer, mimetype) {
   if (buffer.length < 12) return false;
   const hex = buffer.slice(0, 12).toString("hex").toUpperCase();
@@ -111,16 +49,15 @@ function validateMagicBytes(buffer, mimetype) {
     case "image/webp":
       return hex.startsWith("52494646") &&
         buffer.slice(8, 12).toString("ascii") === "WEBP";
-    default: return true; // video/audio — MIME check is sufficient
+    default: return true;
   }
 }
 
-// ── FIX L2: Concurrent upload limiter ────────────────────────────────────────
 let activeUploads = 0;
 const MAX_CONCURRENT = 3;
 
 // ── System prompt ─────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are a world-class forensic media analysis AI used by law enforcement agencies globally.
+const SYSTEM_PROMPT = `You are a world-class forensic media analysis AI used by societal enforcement agencies globally.
 
 SCORING SCALE — strictly enforce:
 - 0–30   → AUTHENTIC  (real, unmanipulated) → overallRisk: "CLEAN" or "LOW"
@@ -149,37 +86,10 @@ Return ONLY a valid JSON object. No prose, no markdown, no explanation:
   "integrityFlags": ["<flag 1>", "<flag 2>"]
 }`;
 
-// ── Auth endpoint ─────────────────────────────────────────────────────────────
-app.post("/api/auth", authLimiter, express.json(), (req, res) => {
-  const { password } = req.body;
-  if (!password) return res.status(400).json({ error: "Password required." });
-
-  // FIX M3: Constant-time comparison (prevents timing attacks)
-  const maxLen = Math.max(password.length, process.env.APP_PASSWORD.length, 1);
-  const provided = Buffer.concat([Buffer.from(String(password)), Buffer.alloc(maxLen)]).slice(0, maxLen);
-  const expected = Buffer.concat([Buffer.from(process.env.APP_PASSWORD), Buffer.alloc(maxLen)]).slice(0, maxLen);
-  const same = crypto.timingSafeEqual(provided, expected)
-    && password.length === process.env.APP_PASSWORD.length;
-
-  if (!same) return res.status(401).json({ error: "Invalid password." });
-
-  const token = createSession();
-  res.json({ success: true, token });
-});
-
-// Logout endpoint
-app.post("/api/logout", auth, (req, res) => {
-  sessions.delete(req.headers["x-auth-token"]);
-  saveSessions();
-  res.json({ success: true });
-});
-
-// Health check for Railway/Render/deployment platforms
 app.get("/", (req, res) => res.json({ status: "ok", service: "VERIDEX API" }));
 
 // ── Main analysis endpoint ────────────────────────────────────────────────────
-app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, res) => {
-  // FIX L2: concurrent upload guard
+app.post("/api/analyze", scanLimiter, upload.single("file"), async (req, res) => {
   if (activeUploads >= MAX_CONCURRENT) {
     return res.status(429).json({ error: "Server busy. Try again in a moment." });
   }
@@ -189,7 +99,6 @@ app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, r
     const file = req.file;
     if (!file) return res.status(400).json({ error: "No file provided." });
 
-    // FIX H3: Validate actual file bytes match claimed MIME
     if (!validateMagicBytes(file.buffer, file.mimetype)) {
       return res.status(400).json({ error: "File content does not match declared type. Upload rejected." });
     }
@@ -198,16 +107,13 @@ app.post("/api/analyze", scanLimiter, auth, upload.single("file"), async (req, r
     const fileType = file.mimetype.startsWith("video") ? "video"
       : file.mimetype.startsWith("audio") ? "audio" : "image";
 
-    // FIX L3: SHA-256 only (removed MD5 — cryptographically broken)
     const sha256 = crypto.createHash("sha256").update(file.buffer).digest("hex");
 
-    // EXIF extraction
     let exifData = null;
     try {
       exifData = await exifr.parse(file.buffer, { tiff: true, exif: true, gps: true, iptc: true });
-    } catch {}
+    } catch { /* no EXIF */ }
 
-    // FIX M2: Strip GPS from EXIF block sent to Claude (keep analysis, drop coords)
     const exifBlock = exifData ? [
       `Camera: ${exifData.Make || "—"} ${exifData.Model || ""}`.trim(),
       `Software: ${exifData.Software || "none"}`,
@@ -244,7 +150,11 @@ ${exifBlock}`;
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
       body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 4096, system: SYSTEM_PROMPT, messages }),
     });
 
@@ -258,23 +168,21 @@ ${exifBlock}`;
     if (start === -1 || end === -1) return res.status(422).json({ error: "Invalid model response." });
 
     const parsed = JSON.parse(clean.slice(start, end + 1));
-    parsed.fileHash   = { sha256 }; // FIX L3: SHA-256 only, no MD5
+    parsed.fileHash   = { sha256 };
     parsed.fileSize   = file.size;
     parsed.usedVision = useVision;
-    // FIX M2: exifRaw NOT sent to client (GPS/device data stays on server)
 
     res.json(parsed);
   } catch (err) {
-    console.error("[analyze]", err.message); // FIX M4: log internally
-    res.status(500).json({ error: "Analysis failed. Please try again." }); // generic to client
+    console.error("[analyze]", err.message);
+    res.status(500).json({ error: "Analysis failed. Please try again." });
   } finally {
-    activeUploads--; // FIX L2: always release slot
+    activeUploads--;
   }
 });
 
-// ── PDF export — FIX H1: now requires auth ───────────────────────────────────
-app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
-  // FIX M5: validate input before touching pdfkit
+// ── PDF export ────────────────────────────────────────────────────────────────
+app.post("/api/export", express.json({ limit: "10mb" }), (req, res) => {
   const { result, fileName, scanDate } = req.body;
   if (!result || typeof result !== "object" || !fileName) {
     return res.status(400).json({ error: "Invalid export data." });
@@ -291,7 +199,7 @@ app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
 
     doc.rect(0, 0, doc.page.width, 70).fill("#0b0f1a");
     doc.fontSize(20).fillColor("#00d4ff").text("VERIDEX FORENSIC REPORT", 50, 18);
-    doc.fontSize(8).fillColor("#4a6080").text("LAW ENFORCEMENT USE ONLY — CONFIDENTIAL", 50, 45);
+    doc.fontSize(8).fillColor("#4a6080").text("SOCIETAL ENFORCEMENT USE ONLY — CONFIDENTIAL", 50, 45);
     doc.moveDown(3);
 
     doc.fontSize(26).fillColor(vColor).text(result.verdict || "UNKNOWN", { align: "center" });
@@ -349,7 +257,6 @@ app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
     doc.fontSize(9).fillColor("#555").text(String(result.caseNotes || "N/A"));
     doc.moveDown(1.5);
 
-    // Forensic Disclaimer section
     line();
     doc.fontSize(10).fillColor("#CC6600").text("FORENSIC DISCLAIMER — READ BEFORE RELYING ON THIS REPORT");
     doc.moveDown(0.3);
@@ -369,11 +276,11 @@ app.post("/api/export", auth, express.json({ limit: "10mb" }), (req, res) => {
       .text("CHAIN OF CUSTODY: Preserve original evidence files unchanged using hardware write-blockers. Document SHA-256 hash before and after analysis. Record use of AI-assisted analysis in case file.");
     doc.moveDown(1.5);
 
-    doc.fontSize(7).fillColor("#aaa").text("VERIDEX FORENSIC AI — Powered by Claude AI (Anthropic) — Restricted Access — Law Enforcement Use Only", { align: "center" });
+    doc.fontSize(7).fillColor("#aaa").text("VERIDEX FORENSIC AI — Powered by Claude AI (Anthropic) — Restricted Access — Societal Enforcement Use Only", { align: "center" });
     doc.fontSize(7).fillColor("#aaa").text("This disclaimer is a mandatory component of all VERIDEX reports — FORENSIC_DISCLAIMER v1.0 — 2026-05-24", { align: "center" });
     doc.end();
   } catch (err) {
-    console.error("[export]", err.message); // FIX M4: log internally
+    console.error("[export]", err.message);
     if (!res.headersSent) res.status(500).json({ error: "Export failed. Try again." });
   }
 });

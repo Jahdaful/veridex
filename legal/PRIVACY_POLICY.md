@@ -2,13 +2,13 @@
 
 **Effective Date:** 2026-05-24
 **Version:** 1.0
-**Classification:** Law Enforcement Use Only
+**Classification:** Societal Enforcement Use Only
 
 ---
 
 ## 1. INTRODUCTION
 
-VERIDEX Forensic AI ("the System", "we", "the Platform") is a restricted-access forensic media analysis tool designed exclusively for use by authorized law enforcement personnel, licensed forensic investigators, and certified digital forensics professionals ("Authorized Users").
+VERIDEX Forensic AI ("the System", "we", "the Platform") is a restricted-access forensic media analysis tool designed exclusively for use by authorized societal enforcement personnel, licensed forensic investigators, and certified digital forensics professionals ("Authorized Users").
 
 This Privacy Policy explains how the System handles data submitted through its interface. By using this System, you acknowledge that you have read, understood, and agree to be bound by this Policy.
 
@@ -16,7 +16,7 @@ This Privacy Policy explains how the System handles data submitted through its i
 
 ## 2. DATA CONTROLLER
 
-This System is operated by the deploying law enforcement agency or authorized institution ("Agency") responsible for its installation and access control. The Agency is the data controller for all data processed through this Platform.
+This System is operated by the deploying societal enforcement agency or authorized institution ("Agency") responsible for its installation and access control. The Agency is the data controller for all data processed through this Platform.
 
 ---
 
@@ -79,7 +79,7 @@ This System uses the Anthropic Claude API to perform AI-assisted forensic analys
 - For images ≤5MB: image content is transmitted to Anthropic's API in base64 format along with metadata.
 - For all files: file metadata (name, type, size, EXIF summary, SHA-256 hash) is transmitted.
 - Anthropic processes this data under their API Terms of Service and Privacy Policy.
-- The deploying Agency is responsible for ensuring Anthropic's data processing terms are compatible with applicable law enforcement data handling requirements before deploying this System in official investigative contexts.
+- The deploying Agency is responsible for ensuring Anthropic's data processing terms are compatible with applicable societal enforcement data handling requirements before deploying this System in official investigative contexts.
 
 **Important:** Agencies operating under strict data sovereignty requirements should review whether transmitting evidence to a third-party API complies with applicable regulations (e.g., CJIS, GDPR, local evidence handling laws) before use.
 
@@ -137,4 +137,4 @@ For privacy-related enquiries regarding this System, contact your Agency's data 
 
 ---
 
-*VERIDEX Forensic AI — Restricted Access — Law Enforcement Use Only*
+*VERIDEX Forensic AI — Restricted Access — Societal Enforcement Use Only*
