@@ -58,8 +58,12 @@ app.use(cors({
   },
 }));
 
+// ── Data directory (Railway Volume at /data, local falls back to cwd) ─────────
+const DATA_DIR = process.env.DATA_DIR || process.cwd();
+try { if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+
 // ── User store (users.json) ───────────────────────────────────────────────────
-const USERS_FILE  = path.join(process.cwd(), "users.json");
+const USERS_FILE  = path.join(DATA_DIR, "users.json");
 const scryptAsync = promisify(crypto.scrypt);
 
 function loadUsers() {
@@ -83,7 +87,7 @@ async function verifyPassword(pw, stored) {
 }
 
 // ── JWT helpers ───────────────────────────────────────────────────────────────
-const REVOKED_FILE = path.join(process.cwd(), "revoked.json");
+const REVOKED_FILE = path.join(DATA_DIR, "revoked.json");
 function loadRevoked() {
   try { return new Set(JSON.parse(fs.readFileSync(REVOKED_FILE, "utf8"))); }
   catch { return new Set(); }
@@ -120,7 +124,7 @@ function auth(req, res, next) {
 }
 
 // ── Case store (cases.json) ───────────────────────────────────────────────────
-const CASES_FILE = path.join(process.cwd(), "cases.json");
+const CASES_FILE = path.join(DATA_DIR, "cases.json");
 
 function loadCases() {
   try { return JSON.parse(fs.readFileSync(CASES_FILE, "utf8")); }
