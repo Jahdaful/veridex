@@ -407,7 +407,7 @@ export default function ForensicsApp() {
                 <div style={{ background: "#FF2D2D08", border: "1px solid #FF2D2D22", borderRadius: 8, padding: "10px 14px", textAlign: "left" }}>
                   <div style={{ fontSize: 9, color: "#FF2D2D", letterSpacing: 2, marginBottom: 4, fontWeight: 700 }}>⚠ RESTRICTED ACCESS</div>
                   <div style={{ fontSize: 10, color: "#7a5050", lineHeight: 1.6 }}>
-                    Authorized access only. This tool is for societal enforcement purposes. Unauthorized access is prohibited and may result in criminal prosecution.
+                    Authorized access only. This tool is for societal enforcement purposes. Unauthorized access is prohibited.
                   </div>
                 </div>
               </div>
@@ -432,7 +432,7 @@ export default function ForensicsApp() {
                     <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
                     <input
                       type="email" value={email} onChange={e => setEmail(e.target.value)}
-                      placeholder="officer@agency.gov" autoFocus required
+                      placeholder="civil@agency.truth" autoFocus required
                       style={inputStyle}
                     />
                   </div>
@@ -461,7 +461,7 @@ export default function ForensicsApp() {
                     <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
                     <input
                       type="email" value={email} onChange={e => setEmail(e.target.value)}
-                      placeholder="officer@agency.gov" autoFocus required
+                      placeholder="civil@agency.truth" autoFocus required
                       style={inputStyle}
                     />
                   </div>
