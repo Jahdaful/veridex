@@ -198,9 +198,11 @@ export default function ForensicsApp() {
 
   const [screen,       setScreen]       = useState(savedAuth ? "home" : "login");
   const [authToken,    setAuthToken]    = useState(savedAuth || "");
-  const [authMode,     setAuthMode]     = useState("login"); // "login" | "signup"
+  const [authMode,     setAuthMode]     = useState("login"); // "login" | "forgot"
   const [email,        setEmail]        = useState("");
   const [password,     setPassword]     = useState("");
+  const [signupEmail,  setSignupEmail]  = useState("");
+  const [signupPw,     setSignupPw]     = useState("");
   const [confirmPw,    setConfirmPw]    = useState("");
   const [termsChecked, setTermsChecked] = useState(false);
   const [authLoading,  setAuthLoading]  = useState(false);
@@ -274,12 +276,12 @@ export default function ForensicsApp() {
 
   async function handleSignup(e) {
     e.preventDefault();
-    if (password !== confirmPw)  { setError("Passwords do not match."); return; }
-    if (password.length < 8)     { setError("Password must be at least 8 characters."); return; }
+    if (signupPw !== confirmPw)   { setError("Passwords do not match."); return; }
+    if (signupPw.length < 8)      { setError("Password must be at least 8 characters."); return; }
     setAuthLoading(true);
     setError(null);
     try {
-      const data = await apiRegister(email, password);
+      const data = await apiRegister(signupEmail, signupPw);
       localStorage.setItem("veridex_auth", data.token);
       setAuthToken(data.token);
       setScreen("home");
@@ -482,12 +484,6 @@ export default function ForensicsApp() {
                 </div>
               </div>
 
-              {/* Mode tabs */}
-              <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
-                <button className={`tab-btn ${authMode === "login" ? "active" : "inactive"}`} onClick={() => switchAuthMode("login")}>LOGIN</button>
-                <button className={`tab-btn ${authMode === "signup" ? "active" : "inactive"}`} onClick={() => switchAuthMode("signup")}>CREATE ACCOUNT</button>
-              </div>
-
               {/* Error */}
               {error && (
                 <div style={{ background: "#FF2D2D11", border: "1px solid #FF2D2D44", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#FF6060" }}>
@@ -495,109 +491,112 @@ export default function ForensicsApp() {
                 </div>
               )}
 
-              {/* LOGIN form */}
-              {authMode === "login" && (
-                <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <div>
-                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
-                    <input
-                      type="email" value={email} onChange={e => setEmail(e.target.value)}
-                      placeholder="civil@agency.truth" autoFocus required
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>PASSWORD</div>
-                    <div style={{ position: "relative" }}>
-                      <input
-                        type={showPws.login ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
-                        placeholder="••••••••••" required
-                        style={{ ...inputStyle, letterSpacing: showPws.login ? "normal" : "3px", paddingRight: 36 }}
-                      />
-                      {eyeBtn("login")}
-                    </div>
-                  </div>
-                  <button
-                    type="submit"
-                    style={{ ...S.btn, marginTop: 4, animation: "glow 3s infinite", opacity: authLoading ? 0.6 : 1 }}
-                    disabled={authLoading}
-                  >
-                    {authLoading ? "AUTHENTICATING..." : "⊕ LOGIN"}
-                  </button>
-                  <div style={{ textAlign: "center", marginTop: 10 }}>
-                    <button type="button" onClick={() => switchAuthMode("forgot")} style={{ background: "none", border: "none", color: "#4a6080", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, textDecoration: "underline" }}>Forgot password?</button>
-                  </div>
-                </form>
-              )}
-
-              {/* SIGNUP form */}
-              {authMode === "signup" && (
-                <form onSubmit={handleSignup} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <div>
-                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
-                    <input
-                      type="email" value={email} onChange={e => setEmail(e.target.value)}
-                      placeholder="civil@agency.truth" autoFocus required
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>
-                      PASSWORD <span style={{ color: "#2a3a55" }}>— min 8 characters</span>
-                    </div>
-                    <div style={{ position: "relative" }}>
-                      <input
-                        type={showPws.signup ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
-                        placeholder="••••••••••" required
-                        style={{ ...inputStyle, letterSpacing: showPws.signup ? "normal" : "3px", paddingRight: 36 }}
-                      />
-                      {eyeBtn("signup")}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>CONFIRM PASSWORD</div>
-                    <div style={{ position: "relative" }}>
-                      <input
-                        type={showPws.signupConfirm ? "text" : "password"} value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
-                        placeholder="••••••••••" required
-                        style={{ ...inputStyle, letterSpacing: showPws.signupConfirm ? "normal" : "3px", paddingRight: 36 }}
-                      />
-                      {eyeBtn("signupConfirm")}
-                    </div>
-                  </div>
-
-                  {/* T&C checkbox */}
-                  <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", background: "#0d1220", border: "1px solid #1e2d4a", borderRadius: 10, padding: "12px 14px" }}>
-                    <input
-                      type="checkbox" checked={termsChecked}
-                      onChange={e => setTermsChecked(e.target.checked)}
-                    />
-                    <span style={{ fontSize: 11, color: "#6a8090", lineHeight: 1.6 }}>
-                      I confirm I am an authorized societal enforcement officer, and I agree to the{" "}
-                      <button type="button" className="modal-link" onClick={() => setModal("terms")}>Terms &amp; Conditions</button>
-                      {" "}and{" "}
-                      <button type="button" className="modal-link" onClick={() => setModal("privacy")}>Privacy Policy</button>.
-                    </span>
-                  </label>
-
-                  <button
-                    type="submit"
-                    style={{ ...S.btn, opacity: (termsChecked && !authLoading) ? 1 : 0.35, cursor: (termsChecked && !authLoading) ? "pointer" : "not-allowed", animation: termsChecked ? "glow 3s infinite" : "none" }}
-                    disabled={!termsChecked || authLoading}
-                  >
-                    {authLoading ? "CREATING ACCOUNT..." : "⊕ CREATE ACCOUNT"}
-                  </button>
-                </form>
-              )}
-
-              {authMode === "forgot" && (
+              {authMode === "forgot" ? (
                 <div style={{ textAlign: "center", padding: "8px 0" }}>
                   <div style={{ fontSize: 13, color: "#e8eaf6", marginBottom: 10, fontWeight: 700, letterSpacing: 1 }}>PASSWORD RESET</div>
                   <div style={{ fontSize: 11, color: "#6a8090", lineHeight: 1.8, marginBottom: 20 }}>
                     Contact your system administrator with your registered email address to have your password reset.
                   </div>
-                  <button onClick={() => switchAuthMode("login")} style={{ ...S.btnGhost, width: "100%" }}>← BACK TO LOGIN</button>
+                  <button onClick={() => setAuthMode("login")} style={{ ...S.btnGhost, width: "100%" }}>← BACK TO LOGIN</button>
                 </div>
+              ) : (
+                <>
+                  {/* LOGIN form */}
+                  <div style={{ background: "#0a0f1e", border: "1px solid #1e2d4a", borderRadius: 14, padding: "18px 16px", marginBottom: 16 }}>
+                    <div style={{ fontSize: 10, color: "#00d4ff", letterSpacing: 3, marginBottom: 14, fontWeight: 700 }}>LOGIN</div>
+                    <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
+                        <input
+                          type="email" value={email} onChange={e => setEmail(e.target.value)}
+                          placeholder="civil@agency.truth" required
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>PASSWORD</div>
+                        <div style={{ position: "relative" }}>
+                          <input
+                            type={showPws.login ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)}
+                            placeholder="••••••••••" required
+                            style={{ ...inputStyle, letterSpacing: showPws.login ? "normal" : "3px", paddingRight: 36 }}
+                          />
+                          {eyeBtn("login")}
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        style={{ ...S.btn, animation: "glow 3s infinite", opacity: authLoading ? 0.6 : 1 }}
+                        disabled={authLoading}
+                      >
+                        {authLoading ? "AUTHENTICATING..." : "⊕ LOGIN"}
+                      </button>
+                      <div style={{ textAlign: "center" }}>
+                        <button type="button" onClick={() => setAuthMode("forgot")} style={{ background: "none", border: "none", color: "#4a6080", fontSize: 10, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, textDecoration: "underline" }}>Forgot password?</button>
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* Divider */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                    <div style={{ flex: 1, height: 1, background: "#1e2d4a" }} />
+                    <div style={{ fontSize: 9, color: "#2a3a55", letterSpacing: 2 }}>OR</div>
+                    <div style={{ flex: 1, height: 1, background: "#1e2d4a" }} />
+                  </div>
+
+                  {/* CREATE ACCOUNT form */}
+                  <div style={{ background: "#0a0f1e", border: "1px solid #1e2d4a", borderRadius: 14, padding: "18px 16px" }}>
+                    <div style={{ fontSize: 10, color: "#00d4ff", letterSpacing: 3, marginBottom: 14, fontWeight: 700 }}>CREATE ACCOUNT</div>
+                    <form onSubmit={handleSignup} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>EMAIL ADDRESS</div>
+                        <input
+                          type="email" value={signupEmail} onChange={e => setSignupEmail(e.target.value)}
+                          placeholder="civil@agency.truth" required
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>PASSWORD <span style={{ color: "#2a3a55" }}>— min 8 chars</span></div>
+                        <div style={{ position: "relative" }}>
+                          <input
+                            type={showPws.signup ? "text" : "password"} value={signupPw} onChange={e => setSignupPw(e.target.value)}
+                            placeholder="••••••••••" required
+                            style={{ ...inputStyle, letterSpacing: showPws.signup ? "normal" : "3px", paddingRight: 36 }}
+                          />
+                          {eyeBtn("signup")}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 9, color: "#4a6080", letterSpacing: 2, marginBottom: 7 }}>CONFIRM PASSWORD</div>
+                        <div style={{ position: "relative" }}>
+                          <input
+                            type={showPws.signupConfirm ? "text" : "password"} value={confirmPw} onChange={e => setConfirmPw(e.target.value)}
+                            placeholder="••••••••••" required
+                            style={{ ...inputStyle, letterSpacing: showPws.signupConfirm ? "normal" : "3px", paddingRight: 36 }}
+                          />
+                          {eyeBtn("signupConfirm")}
+                        </div>
+                      </div>
+                      <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer", background: "#0d1220", border: "1px solid #1e2d4a", borderRadius: 10, padding: "10px 12px" }}>
+                        <input type="checkbox" checked={termsChecked} onChange={e => setTermsChecked(e.target.checked)} />
+                        <span style={{ fontSize: 10, color: "#6a8090", lineHeight: 1.6 }}>
+                          I confirm I am an authorized societal enforcement officer, and I agree to the{" "}
+                          <button type="button" className="modal-link" onClick={() => setModal("terms")}>Terms &amp; Conditions</button>
+                          {" "}and{" "}
+                          <button type="button" className="modal-link" onClick={() => setModal("privacy")}>Privacy Policy</button>.
+                        </span>
+                      </label>
+                      <button
+                        type="submit"
+                        style={{ ...S.btn, opacity: (termsChecked && !authLoading) ? 1 : 0.35, cursor: (termsChecked && !authLoading) ? "pointer" : "not-allowed", animation: termsChecked ? "glow 3s infinite" : "none" }}
+                        disabled={!termsChecked || authLoading}
+                      >
+                        {authLoading ? "CREATING ACCOUNT..." : "⊕ CREATE ACCOUNT"}
+                      </button>
+                    </form>
+                  </div>
+                </>
               )}
 
               <div style={{ textAlign: "center", fontSize: 9, color: "#1e2d4a", marginTop: 24, lineHeight: 1.8 }}>
