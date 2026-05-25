@@ -3,7 +3,6 @@ import cors from "cors";
 import multer from "multer";
 import crypto from "crypto";
 import { promisify } from "util";
-import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
 import exifr from "exifr";
 import PDFDocument from "pdfkit";
@@ -20,7 +19,29 @@ const JWT_SECRET = process.env.JWT_SECRET || (() => {
   console.warn("[warn] JWT_SECRET not set — using ephemeral secret. Sessions won't survive server restart.");
   return s;
 })();
-const JWT_EXPIRY = "8h";
+const JWT_TTL = 8 * 3600; // 8 hours in seconds
+
+function b64url(s) {
+  return Buffer.from(s).toString("base64").replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");
+}
+function signJwt(payload) {
+  const h = b64url(JSON.stringify({ alg:"HS256", typ:"JWT" }));
+  const p = b64url(JSON.stringify(payload));
+  const s = crypto.createHmac("sha256", JWT_SECRET).update(`${h}.${p}`).digest("base64")
+    .replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");
+  return `${h}.${p}.${s}`;
+}
+function verifyJwt(token) {
+  try {
+    const [h, p, s] = token.split(".");
+    const expected = crypto.createHmac("sha256", JWT_SECRET).update(`${h}.${p}`).digest("base64")
+      .replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");
+    if (s !== expected) return null;
+    const payload = JSON.parse(Buffer.from(p, "base64").toString());
+    if (payload.exp && Date.now() > payload.exp * 1000) return null;
+    return payload;
+  } catch { return null; }
+}
 
 const app = express();
 
@@ -77,16 +98,13 @@ const revokedTokens = loadRevoked();
 setInterval(() => {
   let changed = false;
   for (const t of revokedTokens) {
-    try { jwt.verify(t, JWT_SECRET); }
-    catch (e) {
-      if (e.name === "TokenExpiredError") { revokedTokens.delete(t); changed = true; }
-    }
+    if (!verifyJwt(t)) { revokedTokens.delete(t); changed = true; }
   }
   if (changed) saveRevoked(revokedTokens);
 }, 3_600_000);
 
 function issueToken(email) {
-  return jwt.sign({ sub: email }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+  return signJwt({ sub: email, iat: Math.floor(Date.now()/1000), exp: Math.floor(Date.now()/1000) + JWT_TTL });
 }
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
@@ -94,14 +112,11 @@ function auth(req, res, next) {
   const token = req.headers["x-auth-token"] || "";
   if (!token) return res.status(401).json({ error: "Unauthorized" });
   if (revokedTokens.has(token)) return res.status(401).json({ error: "Session expired. Please log in again." });
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.userId = payload.sub;
-    req.token  = token;
-    next();
-  } catch {
-    return res.status(401).json({ error: "Session expired. Please log in again." });
-  }
+  const payload = verifyJwt(token);
+  if (!payload) return res.status(401).json({ error: "Session expired. Please log in again." });
+  req.userId = payload.sub;
+  req.token  = token;
+  next();
 }
 
 // ── Case store (cases.json) ───────────────────────────────────────────────────
