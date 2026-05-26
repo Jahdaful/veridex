@@ -46,13 +46,17 @@ function Card({ children, style }) {
 // ── API helpers ───────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
+async function safeJson(res, fallbackMsg) {
+  try { return await res.json(); } catch { throw new Error(fallbackMsg); }
+}
+
 async function apiAuth(email, password, remember = false) {
   const res = await fetch(`${API_BASE}/api/auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, remember }),
   });
-  const data = await res.json();
+  const data = await safeJson(res, "Authentication failed");
   if (!res.ok) throw new Error(data.error || "Authentication failed");
   return data;
 }
@@ -63,7 +67,7 @@ async function apiRegister(email, password) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  const data = await res.json();
+  const data = await safeJson(res, "Registration failed");
   if (!res.ok) throw new Error(data.error || "Registration failed");
   return data;
 }
@@ -85,7 +89,7 @@ async function apiAnalyze(file, fileType, token) {
     body: formData,
   });
   if (res.status === 401) throw new Error("Unauthorized");
-  const data = await res.json();
+  const data = await safeJson(res, "Analysis failed");
   if (!res.ok || data.error) throw new Error(data.error || "Analysis failed");
   return data;
 }
@@ -100,22 +104,24 @@ async function apiExport(payload, token) {
 
 async function apiChangeEmail(token, newEmail, password) {
   const res = await fetch(`${API_BASE}/api/me/email`, { method: "PUT", headers: { "Content-Type": "application/json", "x-auth-token": token }, body: JSON.stringify({ newEmail, password }) });
-  const data = await res.json();
+  const data = await safeJson(res, "Email update failed");
   if (!res.ok) throw new Error(data.error || "Email update failed");
   return data;
 }
 async function apiChangePassword(token, currentPassword, newPassword) {
   const res = await fetch(`${API_BASE}/api/me/password`, { method: "PUT", headers: { "Content-Type": "application/json", "x-auth-token": token }, body: JSON.stringify({ currentPassword, newPassword }) });
-  const data = await res.json();
+  const data = await safeJson(res, "Password update failed");
   if (!res.ok) throw new Error(data.error || "Password update failed");
   return data;
 }
 async function apiDeleteAccount(token, password) {
   const res = await fetch(`${API_BASE}/api/me`, { method: "DELETE", headers: { "Content-Type": "application/json", "x-auth-token": token }, body: JSON.stringify({ password }) });
-  const data = await res.json();
+  const data = await safeJson(res, "Deletion failed");
   if (!res.ok) throw new Error(data.error || "Deletion failed");
 }
 function emailFromToken(t) { try { return JSON.parse(atob(t.split(".")[1])).sub||"" } catch { return "" } }
+function isTokenExpired(t) { try { const p = JSON.parse(atob(t.split(".")[1])); return p.exp && Date.now() > p.exp * 1000; } catch { return true; } }
+function networkErrorMsg(err) { return (err.message === "Load failed" || err.message === "Failed to fetch" || err.message.startsWith("NetworkError")) ? "Unable to reach server. Check your connection and try again." : err.message; }
 
 // ── Case storage ──────────────────────────────────────────────────────────────
 function loadCases() { return JSON.parse(localStorage.getItem("veridex_cases") || "[]"); }
@@ -194,7 +200,9 @@ function PrivacyContent() {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function ForensicsApp() {
-  const savedAuth = localStorage.getItem("veridex_auth");
+  const rawAuth = localStorage.getItem("veridex_auth");
+  const savedAuth = rawAuth && !isTokenExpired(rawAuth) ? rawAuth : null;
+  if (!savedAuth && rawAuth) localStorage.removeItem("veridex_auth");
 
   const [screen,       setScreen]       = useState(savedAuth ? "home" : "login");
   const [authToken,    setAuthToken]    = useState(savedAuth || "");
@@ -205,7 +213,6 @@ export default function ForensicsApp() {
   const [signupPw,     setSignupPw]     = useState("");
   const [confirmPw,    setConfirmPw]    = useState("");
   const [termsChecked, setTermsChecked] = useState(false);
-  const [rememberMe,   setRememberMe]   = useState(true);
   const [authLoading,  setAuthLoading]  = useState(false);
   const [modal,        setModal]        = useState(null); // null | "terms" | "privacy"
   const [file,         setFile]         = useState(null);
@@ -267,9 +274,10 @@ export default function ForensicsApp() {
       const data = await apiAuth(email, password);
       localStorage.setItem("veridex_auth", data.token);
       setAuthToken(data.token);
+      setUserEmail(emailFromToken(data.token));
       setScreen("home");
     } catch (err) {
-      setError(err.message);
+      setError(networkErrorMsg(err));
     } finally {
       setAuthLoading(false);
     }
@@ -285,9 +293,10 @@ export default function ForensicsApp() {
       const data = await apiRegister(signupEmail, signupPw);
       localStorage.setItem("veridex_auth", data.token);
       setAuthToken(data.token);
+      setUserEmail(emailFromToken(data.token));
       setScreen("home");
     } catch (err) {
-      setError(err.message);
+      setError(networkErrorMsg(err));
     } finally {
       setAuthLoading(false);
     }
@@ -318,7 +327,7 @@ export default function ForensicsApp() {
       setUserEmail(newEmail.toLowerCase().trim());
       setNewEmail(""); setEmailPw("");
       setSettingsMsg({ text: "Email updated successfully.", type: "success" });
-    } catch (err) { setSettingsMsg({ text: err.message, type: "error" }); }
+    } catch (err) { setSettingsMsg({ text: networkErrorMsg(err), type: "error" }); }
     finally { setSettingsLoading(false); }
   }
   async function handleChangePassword(e) {
@@ -330,14 +339,14 @@ export default function ForensicsApp() {
       await apiChangePassword(authToken, curPw, newPw);
       setCurPw(""); setNewPw(""); setConfirmNewPw("");
       setSettingsMsg({ text: "Password updated.", type: "success" });
-    } catch (err) { setSettingsMsg({ text: err.message, type: "error" }); }
+    } catch (err) { setSettingsMsg({ text: networkErrorMsg(err), type: "error" }); }
     finally { setSettingsLoading(false); }
   }
   async function handleDeleteAccount(e) {
     e.preventDefault();
     setSettingsLoading(true); setSettingsMsg(null);
     try { await apiDeleteAccount(authToken, deletePw); await handleLogout(); }
-    catch (err) { setSettingsMsg({ text: err.message, type: "error" }); setSettingsLoading(false); }
+    catch (err) { setSettingsMsg({ text: networkErrorMsg(err), type: "error" }); setSettingsLoading(false); }
   }
 
   // ── File / scan handlers ────────────────────────────────────────────────────
@@ -369,7 +378,7 @@ export default function ForensicsApp() {
       setScreen("report");
     } catch (err) {
       if (err.message === "Unauthorized") { handleUnauthorized(); return; }
-      setError(err.message);
+      setError(networkErrorMsg(err));
       setScreen("home");
     }
   }
@@ -446,6 +455,7 @@ export default function ForensicsApp() {
         .legal-body td{color:#6a8090;padding:4px 6px;border-bottom:1px solid #0d1220}
         input[type=checkbox]{accent-color:#00d4ff;width:15px;height:15px;cursor:pointer;flex-shrink:0;margin-top:2px}
         .modal-link{background:none;border:none;color:#00d4ff;font-family:monospace;font-size:11px;cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px}
+        .input{width:100%;box-sizing:border-box;background:#0d1220;border:1px solid #1e2d4a;border-radius:10px;padding:14px 16px;color:#e8eaf6;font-family:monospace;font-size:13px;outline:none}
       `}</style>
       <div style={S.phone}>
 

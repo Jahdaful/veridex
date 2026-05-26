@@ -24,3 +24,7 @@ dist-ssr
 *.sw?
 .env
 sessions.json
+users.json
+revoked.json
+cases.json
+.vercel

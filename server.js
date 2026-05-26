@@ -6,8 +6,6 @@ import { promisify } from "util";
 import rateLimit from "express-rate-limit";
 import exifr from "exifr";
 import PDFDocument from "pdfkit";
-import fs from "fs";
-import path from "path";
 import pg from "pg";
 const { Pool } = pg;
 
