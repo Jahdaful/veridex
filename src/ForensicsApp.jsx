@@ -46,11 +46,11 @@ function Card({ children, style }) {
 // ── API helpers ───────────────────────────────────────────────────────────────
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
-async function apiAuth(email, password) {
+async function apiAuth(email, password, remember = false) {
   const res = await fetch(`${API_BASE}/api/auth`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, remember }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Authentication failed");
@@ -134,7 +134,7 @@ function TermsContent() {
       <p style={{ color: "#FF9500", fontSize: 10, letterSpacing: 1 }}>Effective Date: 2026-05-24 · Version 1.0 · Societal Enforcement Use Only</p>
 
       <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>1. AUTHORIZED USE</h4>
-      <p>Access to VERIDEX Forensic AI is granted exclusively to duly authorized societal enforcement officers, licensed forensic investigators, and certified digital forensics professionals acting within the scope of their official duties. By creating an account, you represent and warrant that you fall within one of these categories.</p>
+      <p>Access to VERIDEX is granted exclusively to duly authorized societal enforcement officers, licensed investigators, and certified digital intelligence professionals acting within the scope of their official duties. By creating an account, you represent and warrant that you fall within one of these categories.</p>
 
       <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>2. ACCOUNT RESPONSIBILITY</h4>
       <p>You are solely responsible for maintaining the confidentiality of your account credentials. You must not share your login credentials with any other person. Each account is strictly personal and non-transferable. You must notify your system administrator immediately of any unauthorized use of your account.</p>
@@ -143,7 +143,7 @@ function TermsContent() {
       <p>You must not use this system to: conduct unauthorized surveillance of any individual; produce reports intended to mislead any court, tribunal, or agency; analyze media of persons not subject to an active, lawfully authorized investigation; share system access with unauthorized personnel; or use analysis outputs to harass, defame, or harm any individual.</p>
 
       <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>4. AI DISCLAIMER</h4>
-      <p>All analysis outputs are AI-generated probabilistic assessments — not the certified opinion of a qualified human forensic examiner. Results must be independently verified by a qualified professional before use in any legal proceeding. The system may produce false positives and false negatives.</p>
+      <p>All analysis outputs are AI-generated probabilistic assessments — not the certified opinion of a qualified human analyst. Results must be independently verified by a qualified professional before use in any legal proceeding. The system may produce false positives and false negatives.</p>
 
       <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>5. DATA HANDLING</h4>
       <p>Uploaded files are processed in server memory only and are not written to disk. Files are discarded immediately after analysis. Images ≤5MB are transmitted to the Anthropic Claude API for AI analysis. GPS coordinates extracted from EXIF data are not sent to the client or included in reports.</p>
@@ -174,7 +174,7 @@ function PrivacyContent() {
       <p>We do not collect or store: uploaded file content beyond the analysis request; GPS coordinates extracted from EXIF data (presence is flagged, coordinates are discarded); analysis results (these are returned to your device only); or any analytics, tracking, or telemetry data.</p>
 
       <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>3. THIRD-PARTY PROCESSORS</h4>
-      <p><strong style={{ color: "#c8d6e8" }}>Anthropic (Claude AI):</strong> Images ≤5MB and associated file metadata are transmitted to the Anthropic Claude API for AI-powered forensic analysis. This transmission is governed by Anthropic's Terms of Service and Privacy Policy. Agencies operating under CJIS Security Policy or GDPR must verify that Anthropic's data processing terms are compatible with their requirements before submitting sensitive evidence materials.</p>
+      <p><strong style={{ color: "#c8d6e8" }}>Anthropic (Claude AI):</strong> Images ≤5MB and associated file metadata are transmitted to the Anthropic Claude API for AI-powered authenticity analysis. This transmission is governed by Anthropic's Terms of Service and Privacy Policy. Agencies operating under CJIS Security Policy or GDPR must verify that Anthropic's data processing terms are compatible with their requirements before submitting sensitive evidence materials.</p>
 
       <h4 style={{ color: "#00d4ff", fontSize: 10, letterSpacing: 2, margin: "14px 0 6px" }}>4. DATA RETENTION</h4>
       <p><strong style={{ color: "#c8d6e8" }}>Uploaded files:</strong> Not retained — in-memory only, discarded after analysis.</p>
@@ -205,6 +205,7 @@ export default function ForensicsApp() {
   const [signupPw,     setSignupPw]     = useState("");
   const [confirmPw,    setConfirmPw]    = useState("");
   const [termsChecked, setTermsChecked] = useState(false);
+  const [rememberMe,   setRememberMe]   = useState(true);
   const [authLoading,  setAuthLoading]  = useState(false);
   const [modal,        setModal]        = useState(null); // null | "terms" | "privacy"
   const [file,         setFile]         = useState(null);
@@ -238,13 +239,13 @@ export default function ForensicsApp() {
   const fileRef = useRef();
 
   const SCAN_STEPS = [
-    "Initializing forensic engine...",
+    "Initializing analysis engine...",
     "Extracting file metadata & hashes...",
     "Running deepfake neural analysis...",
     "Scanning biometric markers...",
     "Analyzing EXIF integrity...",
     "Detecting AI generation signatures...",
-    "Cross-referencing forensic database...",
+    "Cross-referencing intelligence database...",
     "Generating authenticity report...",
   ];
 
@@ -471,9 +472,9 @@ export default function ForensicsApp() {
 
               {/* Header */}
               <div style={{ marginBottom: 24, textAlign: "center" }}>
-                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3, marginBottom: 10 }}>FORENSIC AI DETECTION SUITE</div>
+                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3, marginBottom: 10 }}>AI AUTHENTICITY SUITE</div>
                 <div style={{ fontSize: 26, color: "#e8eaf6", fontWeight: 700, marginBottom: 6, letterSpacing: 2 }}>VERIDEX</div>
-                <div style={{ fontSize: 10, color: "#4a6080", marginBottom: 16 }}>v2.0 · Forensic Media Analysis</div>
+                <div style={{ fontSize: 10, color: "#4a6080", marginBottom: 16 }}>v2.0 · Media Authenticity Analysis</div>
 
                 {/* Disclaimer */}
                 <div style={{ background: "#FF2D2D08", border: "1px solid #FF2D2D22", borderRadius: 8, padding: "10px 14px", textAlign: "left" }}>
@@ -567,7 +568,7 @@ export default function ForensicsApp() {
               )}
 
               <div style={{ textAlign: "center", fontSize: 9, color: "#1e2d4a", marginTop: 24, lineHeight: 1.8 }}>
-                VERIDEX FORENSIC AI · CLASSIFIED<br />
+                VERIDEX · MEDIA INTELLIGENCE<br />
                 SOCIETAL ENFORCEMENT USE ONLY
               </div>
             </div>
@@ -577,7 +578,7 @@ export default function ForensicsApp() {
           {screen === "home" && (
             <div style={{ animation: "fadeIn .4s ease" }}>
               <div style={{ marginBottom: 24 }}>
-                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3, marginBottom: 8 }}>FORENSIC AI DETECTION SUITE</div>
+                <div style={{ fontSize: 11, color: "#00d4ff", letterSpacing: 3, marginBottom: 8 }}>AI AUTHENTICITY SUITE</div>
                 <div style={{ fontSize: 20, color: "#e8eaf6", fontWeight: 700, lineHeight: 1.3, marginBottom: 8 }}>Media Authenticity<br />Analysis System</div>
                 <div style={{ fontSize: 12, color: "#4a6080", lineHeight: 1.6 }}>Upload video, image, or audio for AI manipulation detection, deepfake analysis, and identity modification screening.</div>
               </div>
@@ -645,7 +646,7 @@ export default function ForensicsApp() {
           {/* ── REPORT ───────────────────────────────────────────────────────── */}
           {screen === "report" && result && (
             <div style={{ animation: "fadeIn .4s ease" }}>
-              <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 3, marginBottom: 6 }}>FORENSIC REPORT · {scanDate}</div>
+              <div style={{ fontSize: 10, color: "#4a6080", letterSpacing: 3, marginBottom: 6 }}>AUTHENTICITY REPORT · {scanDate}</div>
               <div style={{ fontSize: 11, color: "#2a5a7a", marginBottom: 16, wordBreak: "break-all" }}>FILE: {file?.name}</div>
 
               <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
@@ -659,7 +660,7 @@ export default function ForensicsApp() {
 
               {result.verdict && (
                 <div style={{ background: `${VERDICT_COLORS[result.verdict]}22`, border: `2px solid ${VERDICT_COLORS[result.verdict]}`, borderRadius: 12, padding: "16px 20px", marginBottom: 12, textAlign: "center" }}>
-                  <div style={{ fontSize: 9, color: VERDICT_COLORS[result.verdict], letterSpacing: 3, marginBottom: 4 }}>FORENSIC VERDICT</div>
+                  <div style={{ fontSize: 9, color: VERDICT_COLORS[result.verdict], letterSpacing: 3, marginBottom: 4 }}>AUTHENTICITY VERDICT</div>
                   <div style={{ fontSize: 28, fontWeight: 900, color: VERDICT_COLORS[result.verdict], letterSpacing: 4 }}>{result.verdict}</div>
                 </div>
               )}
@@ -759,7 +760,7 @@ export default function ForensicsApp() {
                   This report is AI-generated (Claude, Anthropic) and constitutes a <strong style={{color:"#c8a070"}}>probabilistic assessment only</strong> — not a certified forensic expert opinion. Results must be independently verified before use in any legal proceeding.
                 </div>
                 <button onClick={() => setScreen("legal")} style={{ background: "none", border: "none", color: "#FF9500", fontSize: 9, cursor: "pointer", fontFamily: "monospace", letterSpacing: 1, padding: 0, marginTop: 8, textDecoration: "underline" }}>
-                  VIEW FULL FORENSIC DISCLAIMER →
+                  VIEW FULL AI ANALYSIS DISCLAIMER →
                 </button>
               </div>
 
@@ -769,7 +770,7 @@ export default function ForensicsApp() {
                   {exporting ? "EXPORTING..." : "⬇ EXPORT PDF"}
                 </button>
               </div>
-              <div style={{ textAlign: "center", fontSize: 9, color: "#1e2d4a", marginBottom: 10 }}>VERIDEX FORENSIC AI · CLASSIFIED · SOCIETAL ENFORCEMENT USE ONLY</div>
+              <div style={{ textAlign: "center", fontSize: 9, color: "#1e2d4a", marginBottom: 10 }}>VERIDEX · MEDIA INTELLIGENCE · SOCIETAL ENFORCEMENT USE ONLY</div>
             </div>
           )}
 
@@ -875,10 +876,10 @@ export default function ForensicsApp() {
               </div>
               <div className="legal-body">
                 {legalTab === 0 && <>
-                  <h2>FORENSIC DISCLAIMER</h2>
+                  <h2>AI ANALYSIS DISCLAIMER</h2>
                   <p><strong style={{color:"#FF9500"}}>Effective Date:</strong> 2026-05-24 · Version 1.0 · Societal Enforcement Use Only</p>
                   <h3>1. Nature of Analysis</h3>
-                  <p>VERIDEX uses AI (Claude, Anthropic) for probabilistic forensic analysis. All outputs are AI-generated assessments, not certified expert opinions.</p>
+                  <p>VERIDEX uses AI (Claude, Anthropic) for probabilistic authenticity analysis. All outputs are AI-generated assessments, not certified expert opinions.</p>
                   <h3>2. Limitations</h3>
                   <ul>
                     <li>Images ≤5MB: visual inspection + metadata analysis</li>
@@ -901,7 +902,7 @@ export default function ForensicsApp() {
                     <tr><td>70–100%</td><td style={{color:"#FF2D2D"}}>DEEPFAKE</td><td>Significant manipulation indicators — must verify</td></tr>
                   </tbody></table>
                   <h3>5. Not a Substitute for Expert Analysis</h3>
-                  <p>Outputs must NOT be used as the sole basis for arrest, search, detention, charging decisions, or court submissions as expert evidence without independent verification by a certified forensic professional.</p>
+                  <p>Outputs must NOT be used as the sole basis for arrest, search, detention, charging decisions, or court submissions as expert evidence without independent verification by a certified professional.</p>
                   <h3>6. Chain of Custody</h3>
                   <p>Preserve original files unchanged using hardware write-blockers. Document SHA-256 hash before and after analysis. Record AI-assisted analysis in the case file.</p>
                   <h3>7. Disclosure in Legal Proceedings</h3>
@@ -911,7 +912,7 @@ export default function ForensicsApp() {
                   <h2>TERMS OF SERVICE</h2>
                   <p><strong style={{color:"#FF9500"}}>Effective Date:</strong> 2026-05-24 · Version 1.0 · Societal Enforcement Use Only</p>
                   <h3>1. Authorized Use</h3>
-                  <p>Licensed exclusively for: forensic analysis of digital media in active authorized investigations, generating forensic reports, and agency training using non-sensitive media.</p>
+                  <p>Licensed exclusively for: authenticity analysis of digital media in active authorized investigations, generating authenticity reports, and agency training using non-sensitive media.</p>
                   <h3>2. Access Controls</h3>
                   <ul>
                     <li>Access is restricted to authorized personnel acting within official duties</li>
@@ -980,7 +981,7 @@ export default function ForensicsApp() {
                   <ul>
                     <li>Analyzing digital media in connection with an active, lawfully authorized investigation</li>
                     <li>Generating investigative reports for official case files</li>
-                    <li>Supporting certified forensic examiners as a preliminary screening tool</li>
+                    <li>Supporting certified analysts as a preliminary screening tool</li>
                     <li>Professional training under Agency supervision</li>
                   </ul>
                   <h3>3. Prohibited Activities</h3>
